@@ -16,6 +16,7 @@ use oncode\rawsearch\events\ElementQueryEvent;
 use oncode\rawsearch\events\RowsEvent;
 use oncode\rawsearch\events\SearchEvent;
 use oncode\rawsearch\helpers\IndexHelper;
+use oncode\rawsearch\helpers\SentenceExtractor;
 use oncode\rawsearch\helpers\StringHelper;
 use oncode\rawsearch\helpers\WordRadiusExtractor;
 use oncode\rawsearch\RawSearch;
@@ -43,6 +44,9 @@ class Search extends Component
 
     /** Allows modifying the results of the current page. */
     public const EVENT_MODIFY_RESULTS = 'modifyResults';
+
+    public const EXTRACT_WORDS = 'words';
+    public const EXTRACT_SENTENCES = 'sentences';
 
     public const MODE_EXACT = WordRadiusExtractor::MODE_EXACT;
     public const MODE_WORD_START = WordRadiusExtractor::MODE_WORD_START;
@@ -75,6 +79,10 @@ class Search extends Component
             'radius' => 4,
             'limit' => 10,
             'wrap' => '<mark>{phrase}</mark>',
+            // `words` = the words around the found words (radius), `sentences` = the sentences with the found words
+            'type' => self::EXTRACT_WORDS,
+            // sentence snippets: max characters, longer sentences are shortened to the radius
+            'maxLength' => 200,
         ],
     ];
 
@@ -254,6 +262,8 @@ class Search extends Component
         $config['extract']['enabled'] = (bool)$config['extract']['enabled'];
         $config['extract']['radius'] = max(0, (int)$config['extract']['radius']);
         $config['extract']['limit'] = max(0, (int)$config['extract']['limit']);
+        $config['extract']['type'] = $config['extract']['type'] === self::EXTRACT_SENTENCES ? self::EXTRACT_SENTENCES : self::EXTRACT_WORDS;
+        $config['extract']['maxLength'] = max(20, (int)$config['extract']['maxLength']);
 
         return $config;
     }
@@ -332,7 +342,9 @@ class Search extends Component
                 'rawsearch.text',
             ])
             ->from(['rawsearch' => Table::INDEX])
-            ->where(['rawsearch.siteId' => $config['siteId']]);
+            ->where(['rawsearch.siteId' => $config['siteId']])
+            // rows are inserted in field layout order, so the snippets follow the order of the content
+            ->orderBy(['rawsearch.id' => SORT_ASC]);
 
         $limit = RawSearch::getInstance()->getSettings()->rowLimitSearch;
 
@@ -585,15 +597,26 @@ class Search extends Component
                 }
 
                 // the index text is plain text already, html must not be stripped twice
-                $extractor = new WordRadiusExtractor(
-                    (string)$row['text'],
-                    $normalizedQuery,
-                    (string)$extractConfig['wrap'],
-                    $config['mode'],
-                    $extractConfig['radius'],
-                    $extractConfig['limit'],
-                    false,
-                );
+                $extractor = $extractConfig['type'] === self::EXTRACT_SENTENCES
+                    ? new SentenceExtractor(
+                        (string)$row['text'],
+                        $normalizedQuery,
+                        (string)$extractConfig['wrap'],
+                        $config['mode'],
+                        $extractConfig['radius'],
+                        $extractConfig['limit'],
+                        false,
+                        $extractConfig['maxLength'],
+                    )
+                    : new WordRadiusExtractor(
+                        (string)$row['text'],
+                        $normalizedQuery,
+                        (string)$extractConfig['wrap'],
+                        $config['mode'],
+                        $extractConfig['radius'],
+                        $extractConfig['limit'],
+                        false,
+                    );
                 $extractor->extract();
 
                 $results[$key]['rows'][$rowKey]['snippets'] = [

@@ -8,7 +8,7 @@ A highly customizable text search for Craft CMS 5 with weighted results and resu
   * Words that should not be indexed
   * Field types, fields and element types that should be indexed
 * Weighted sorting: points for (partial) matches in titles and fields, per field and per element type
-* Result snippets with highlighted words and an adjustable word radius
+* Result snippets with highlighted words: an adjustable word radius or whole sentences
 * Search modes: exact word, word start and word content, words combined with AND or OR
 * Multi-site, Matrix/Neo content is indexed as part of its owner
 * Only live elements are returned (disabled, pending and expired entries are filtered out)
@@ -139,6 +139,11 @@ php craft rawsearch/api-key/generate           # generate a new API key
 | `extract.radius` | `4` | Words shown around a found word. |
 | `extract.limit` | `10` | Max snippets per element. |
 | `extract.wrap` | `<mark>{phrase}</mark>` | Code wrapped around the found words. |
+| `extract.type` | `'words'` | `'words'`: the words around the found words (`radius`). `'sentences'`: the whole sentences that contain the found words, neighboring sentences are merged. |
+| `extract.maxLength` | `200` | Sentence snippets only: max characters, longer sentences are shortened to the words around the found words (`radius`). |
+
+Sentences end at `.`, `!`, `?`, `…` (and `。！？`) followed by a word that doesn't start lowercase, and at line breaks, paragraphs, headings and list items. Abbreviations like `z.B.`, `e.g.`, `Dr.` and dates like `12. Mai` don't end a sentence.
+`isAtStart`/`isAtEnd` of an extract are `false` where text was cut off, show "…" there (like the example above does).
 
 ### Result
 

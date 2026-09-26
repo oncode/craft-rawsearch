@@ -205,6 +205,32 @@ class SearchTest extends TestCase
         $this->assertSame('the <b>quokka</b> habitat.', $quokka['extracts'][0]['text']);
     }
 
+    public function testSentenceExtracts(): void
+    {
+        $results = $this->search('quokkas', ['extract' => ['type' => 'sentences']])['results'];
+        $quokka = array_values(array_filter($results, fn($r) => $r['title'] === 'Quokka habitat protection'))[0];
+
+        // the body has a line break between the paragraphs
+        $this->assertSame(['The <mark>quokkas</mark> are the most important species here.'], array_column($quokka['extracts'], 'text'));
+        $this->assertTrue($quokka['extracts'][0]['isAtStart']);
+        $this->assertTrue($quokka['extracts'][0]['isAtEnd']);
+    }
+
+    public function testSentenceExtractsFallBackToRadius(): void
+    {
+        $results = $this->search('rottnest', ['extract' => ['type' => 'sentences', 'maxLength' => 30, 'radius' => 2]])['results'];
+
+        $this->assertSame(['<mark>Rottnest</mark> Island is'], array_column($results[0]['extracts'], 'text'));
+        $this->assertFalse($results[0]['extracts'][0]['isAtEnd']);
+    }
+
+    public function testInvalidExtractTypeUsesWords(): void
+    {
+        $words = $this->search('rottnest')['results'][0]['extracts'];
+
+        $this->assertSame($words, $this->search('rottnest', ['extract' => ['type' => 'nope']])['results'][0]['extracts']);
+    }
+
     public function testExtractCanBeDisabled(): void
     {
         foreach ([false, ['enabled' => false]] as $extract) {

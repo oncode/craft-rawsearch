@@ -70,6 +70,9 @@ class ApiTest extends TestCase
 
         [, $data] = $this->request('search', ['query' => 'quokka', 'extract' => ['radius' => 1, 'wrap' => '<b>{phrase}</b>']]);
         $this->assertStringContainsString('<b>', $data['result'][0]['extracts'][0]['text']);
+
+        [, $data] = $this->request('search', ['query' => 'rottnest', 'extract' => ['type' => 'sentences', 'maxLength' => 300]]);
+        $this->assertSame('<mark>Rottnest</mark> Island is home to the quokka.', $data['result'][0]['extracts'][0]['text']);
     }
 
     public function testSearchHtml(): void

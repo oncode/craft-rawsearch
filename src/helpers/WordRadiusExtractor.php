@@ -18,26 +18,26 @@ class WordRadiusExtractor
     public const MODE_WORD_START = 2;
     public const MODE_WORD_CONTENT = 3;
 
-    private string $text;
-    private int $textLength = 0;
+    protected string $text;
+    protected int $textLength = 0;
     private string $textNormalized = '';
 
     /** @var string[] */
-    private array $phraseWords;
+    protected array $phraseWords;
 
     /** @var int[] Character offsets of all whitespaces in the text */
-    private array $whitespaces = [];
+    protected array $whitespaces = [];
 
     /** @var array<int,int> Byte offset of whitespace in normalized text => whitespace index */
-    private array $normalizedWhitespaceIndexes = [];
-    private int $nrOfWhitespaces = 0;
+    protected array $normalizedWhitespaceIndexes = [];
+    protected int $nrOfWhitespaces = 0;
 
     /** @var int[] Byte offsets (in normalized text) of the whitespace in front of each match */
-    private array $matches = [];
-    private int $matchesCount = 0;
+    protected array $matches = [];
+    protected int $matchesCount = 0;
 
-    private int $wordsFound = 0;
-    private array $extracts = [];
+    protected int $wordsFound = 0;
+    protected array $extracts = [];
 
     // state of the extract that is currently built
     private int $m = 0;
@@ -68,11 +68,11 @@ class WordRadiusExtractor
     public function __construct(
         string $text,
         string $phrase,
-        private string $wrap = '',
-        private int $wordMode = self::MODE_WORD_START,
-        private int $wordRadius = 4,
-        private int $limit = 10,
-        private bool $isHtml = true,
+        protected string $wrap = '',
+        protected int $wordMode = self::MODE_WORD_START,
+        protected int $wordRadius = 4,
+        protected int $limit = 10,
+        protected bool $isHtml = true,
     ) {
         $this->text = $text;
         $this->phraseWords = array_values(array_filter(explode(' ', $phrase), fn($w) => $w !== ''));
@@ -105,9 +105,9 @@ class WordRadiusExtractor
         $this->buildExtracts();
     }
 
-    private function prepare(): bool
+    protected function prepare(): bool
     {
-        $this->text = ' ' . ($this->isHtml ? StringHelper::stripHtml($this->text) : $this->text) . ' ';
+        $this->text = ' ' . ($this->isHtml ? IndexHelper::prepareText($this->text) : $this->text) . ' ';
         $this->textLength = mb_strlen($this->text);
 
         // punctuation becomes whitespace, which keeps the character count of the original text
@@ -139,7 +139,7 @@ class WordRadiusExtractor
         return true;
     }
 
-    private function prepareMatches(): void
+    protected function prepareMatches(): void
     {
         $this->matches = [];
 
@@ -170,6 +170,8 @@ class WordRadiusExtractor
 
     private function addPart(string $part): void
     {
+        // line breaks (paragraphs) are kept in the text for the sentence detection, extracts are one line
+        $part = strtr($part, ["\n" => ' ', "\r" => ' ']);
         $this->extractParts[] = $part;
         $this->extract .= Html::encode($part);
     }
@@ -179,8 +181,34 @@ class WordRadiusExtractor
         $this->words[] = $word;
         $this->wordsFound++;
         $this->extractParts[] = $word;
+        $this->extract .= $this->wrapWord($word);
+    }
+
+    /**
+     * Returns the escaped word wrapped with the wrap code.
+     */
+    protected function wrapWord(string $word): string
+    {
         $encoded = Html::encode($word);
-        $this->extract .= $this->wrap !== '' ? str_replace('{phrase}', $encoded, $this->wrap) : $encoded;
+
+        return $this->wrap !== '' ? str_replace('{phrase}', $encoded, $this->wrap) : $encoded;
+    }
+
+    /**
+     * Returns the character offsets (start, end) of all found words in the text, sorted.
+     *
+     * @return array<array{0: int, 1: int}>
+     */
+    protected function matchedWordRanges(): array
+    {
+        $ranges = [];
+
+        foreach ($this->matches as $match) {
+            $index = $this->normalizedWhitespaceIndexes[$match];
+            $ranges[] = [$this->whitespaces[$index] + 1, $this->whitespaces[$index + 1]];
+        }
+
+        return $ranges;
     }
 
     /**
@@ -311,7 +339,7 @@ class WordRadiusExtractor
         return true;
     }
 
-    private function buildExtracts(): void
+    protected function buildExtracts(): void
     {
         for ($this->m = 0; $this->limit > count($this->extracts) && $this->m < $this->matchesCount; $this->m++) {
             $this->words = [];

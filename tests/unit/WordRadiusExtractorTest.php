@@ -132,7 +132,13 @@ class WordRadiusExtractorTest extends TestCase
 
     public function testOverlappingExtractsDontRepeatText(): void
     {
+        // html input gets its whitespace collapsed
         $e = $this->extract(' der das die  der Test die der Test was wie Test wo wo  wo wo wo wo ', 'test', 2, 2);
+        $this->assertSame(['die der [Test] die der [Test] was wie [Test] wo wo'], $this->texts($e));
+
+        // plain text keeps it, consecutive whitespaces don't count as words
+        $e = new \oncode\rawsearch\helpers\WordRadiusExtractor(' der das die  der Test die der Test was wie Test wo wo  wo wo wo wo ', 'test', '[{phrase}]', 2, 2, 10, false);
+        $e->extract();
         $this->assertSame(['die  der [Test] die der [Test] was wie [Test] wo wo'], $this->texts($e));
     }
 

@@ -62,7 +62,9 @@ class StringHelperTest extends TestCase
 
     public function testStripHtml(): void
     {
-        $this->assertSame(' a  b  &lt; c', StringHelper::stripHtml('<p>a</p><p>b</p> &amp;lt; c'));
+        $this->assertSame(" a\n b\n &lt; c", StringHelper::stripHtml('<p>a</p><p>b</p> &amp;lt; c'));
+        // inline tags don't add spaces, others do
+        $this->assertSame('word.  a b', StringHelper::stripHtml('<b>word</b>.<img src="x"> a<input>b'));
         $this->assertSame('a b', StringHelper::stripHtml("a\u{00A0}b"));
     }
 

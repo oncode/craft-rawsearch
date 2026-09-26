@@ -37,6 +37,9 @@ class IndexHelperTest extends TestCase
 
     public function testPrepareText(): void
     {
-        $this->assertSame('Hello, World & more', IndexHelper::prepareText("<p>Hello,</p>\n\n<p>World &amp; more</p>"));
+        // paragraphs become lines, they separate sentences
+        $this->assertSame("Hello,\nWorld & more", IndexHelper::prepareText("<p>Hello,</p>\n\n<p>World &amp; more</p>"));
+        $this->assertSame("A\nB\nC", IndexHelper::prepareText("A<br>B\r\n  \n C"));
+        $this->assertSame('Say hello.', IndexHelper::prepareText('Say <strong>hello</strong>.'));
     }
 }

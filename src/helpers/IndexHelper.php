@@ -99,10 +99,11 @@ class IndexHelper
     }
 
     /**
-     * Prepares a string for the column that is used to generate snippets (keeps punctuation).
+     * Prepares a string for the column that is used to generate snippets.
+     * Keeps punctuation and line breaks, both are needed to detect sentences.
      */
     public static function prepareText(string $str): string
     {
-        return trim(StringHelper::collapseWhitespace(StringHelper::stripHtml($str)));
+        return trim(StringHelper::collapseWhitespaceKeepLines(StringHelper::stripHtml(str_replace("\r", '', $str))));
     }
 }

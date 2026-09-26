@@ -48,10 +48,14 @@ class StringHelper
 
     /**
      * Removes html tags and decodes entities.
+     * Block elements and line breaks become new lines, they separate sentences.
      */
     public static function stripHtml(string $str): string
     {
-        // prevent text from sticking together when tags are removed
+        $str = preg_replace('/<(?:br|hr)\b[^>]*>|<\/(?:p|div|li|dt|dd|h[1-6]|tr|td|th|blockquote|pre|figcaption|section|article)\s*>/i', "\n", $str);
+        // inline elements don't separate words ("<b>word</b>." stays "word.")
+        $str = preg_replace('/<\/?(?:a|abbr|b|bdi|bdo|cite|code|data|del|dfn|em|font|i|ins|kbd|mark|q|s|samp|small|span|strong|sub|sup|time|u|var)\b[^>]*>/i', '', $str);
+        // prevent text from sticking together when other tags are removed
         $str = preg_replace('/<[^>]*>/', ' ', $str);
         $str = html_entity_decode($str, ENT_QUOTES | ENT_HTML5, 'UTF-8');
 
@@ -62,6 +66,16 @@ class StringHelper
     public static function collapseWhitespace(string $str): string
     {
         return preg_replace('/\s+/u', ' ', $str);
+    }
+
+    /**
+     * Collapses whitespace but keeps (single) line breaks.
+     */
+    public static function collapseWhitespaceKeepLines(string $str): string
+    {
+        $str = preg_replace('/[^\S\n]+/u', ' ', $str);
+
+        return preg_replace('/ *\n[\s]*/u', "\n", $str);
     }
 
     public static function replaceDiacritics(string $str): string
