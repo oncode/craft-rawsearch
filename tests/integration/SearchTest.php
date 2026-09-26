@@ -343,6 +343,53 @@ class SearchTest extends TestCase
         }
     }
 
+    public function testReadmeRecipeDateRelevance(): void
+    {
+        $ferry = self::$fixture->entry('ferry');
+        $originalPostDate = clone $ferry->postDate;
+        $scores = fn() => array_column($this->search('quokka')['results'], 'score', 'title');
+
+        try {
+            // the ferry entry was published 2 years ago
+            $ferry->postDate = new \DateTime('-730 days');
+            Craft::$app->getElements()->saveElement($ferry);
+            $before = $scores();
+
+            // the recipe of the README
+            $this->on(Search::class, Search::EVENT_MODIFY_SEARCH_QUERY, function(DbQueryEvent $event) {
+                $event->dbQuery
+                    ->addSelect(['relevanceDate' => 'COALESCE([[dateEntries.postDate]], [[dateElements.dateCreated]])'])
+                    ->leftJoin(['dateEntries' => \craft\db\Table::ENTRIES], '[[dateEntries.id]] = [[rawsearch.elementId]]')
+                    ->leftJoin(['dateElements' => \craft\db\Table::ELEMENTS], '[[dateElements.id]] = [[rawsearch.elementId]]');
+            });
+            $this->on(Sort::class, Sort::EVENT_ADD_WEIGHT_SCORE, function(WeightScoreEvent $event) {
+                $date = $event->elementRow['rows'][0]['relevanceDate'] ?? null;
+
+                if ($date) {
+                    $ageDays = max(0, (time() - strtotime($date . ' UTC')) / 86400);
+                    $event->score += (int)round(300 * 0.5 ** ($ageDays / 365));
+                }
+            });
+
+            $after = $scores();
+
+            // just published: full bonus, 2 years (2 half-lives) old: a quarter
+            $this->assertSame($before['Quokka habitat protection'] + 300, $after['Quokka habitat protection']);
+            $this->assertSame($before['Ferry timetable'] + 75, $after['Ferry timetable']);
+
+            // it can be combined with the section boost, which joins `entries` too
+            $this->on(Search::class, Search::EVENT_MODIFY_SEARCH_QUERY, function(DbQueryEvent $event) {
+                $event->dbQuery
+                    ->addSelect(['entries.sectionId'])
+                    ->leftJoin(['entries' => \craft\db\Table::ENTRIES], '[[entries.id]] = [[rawsearch.elementId]]');
+            });
+            $this->assertSame($after, $scores());
+        } finally {
+            $ferry->postDate = $originalPostDate;
+            Craft::$app->getElements()->saveElement($ferry);
+        }
+    }
+
     public function testJoinsDontCauseAmbiguousColumns(): void
     {
         $this->on(Search::class, Search::EVENT_MODIFY_SEARCH_QUERY, function(DbQueryEvent $event) {

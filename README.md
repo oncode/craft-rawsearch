@@ -316,6 +316,42 @@ Event::on(Index::class, Index::EVENT_BEFORE_INDEX_ELEMENT, function(IndexElement
 | `Autocomplete` | `EVENT_MODIFY_TERMS` | `RowsEvent` |
 | `Index` | `EVENT_BEFORE_INDEX_ELEMENT`, `EVENT_AFTER_INDEX_ELEMENT`, `EVENT_MODIFY_ATTRIBUTE_VALUES`, `EVENT_MODIFY_FIELD_VALUES`, `EVENT_MODIFY_ROWS` | `IndexElementEvent` |
 
+### Recipe: rank newer content higher
+
+Newer elements get up to 300 points, the bonus halves every 365 days (published today: 300, one year ago: 150, two years ago: 75).
+Entries use their post date, other elements their creation date.
+
+```php
+use craft\db\Table;
+use oncode\rawsearch\events\DbQueryEvent;
+use oncode\rawsearch\events\WeightScoreEvent;
+use oncode\rawsearch\services\Search;
+use oncode\rawsearch\services\Sort;
+use yii\base\Event;
+
+// add the date of every element to the index rows
+// (own table aliases, so it can be combined with other joins like the section boost above)
+Event::on(Search::class, Search::EVENT_MODIFY_SEARCH_QUERY, function(DbQueryEvent $event) {
+    $event->dbQuery
+        ->addSelect(['relevanceDate' => 'COALESCE([[dateEntries.postDate]], [[dateElements.dateCreated]])'])
+        ->leftJoin(['dateEntries' => Table::ENTRIES], '[[dateEntries.id]] = [[rawsearch.elementId]]')
+        ->leftJoin(['dateElements' => Table::ELEMENTS], '[[dateElements.id]] = [[rawsearch.elementId]]');
+});
+
+Event::on(Sort::class, Sort::EVENT_ADD_WEIGHT_SCORE, function(WeightScoreEvent $event) {
+    $date = $event->elementRow['rows'][0]['relevanceDate'] ?? null;
+
+    if ($date) {
+        // dates are stored in UTC
+        $ageDays = max(0, (time() - strtotime($date . ' UTC')) / 86400);
+        $event->score += (int)round(300 * 0.5 ** ($ageDays / 365));
+    }
+});
+```
+
+Keep the maximum in the range of a few title matches (100–500), otherwise a weak new match beats a strong old one.
+To leave out evergreen content, e.g. the "pages" section, add `dateEntries.sectionId` to the select and skip those elements in the score event.
+
 ## Permissions
 
 * Access statistic
