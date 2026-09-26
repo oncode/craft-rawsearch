@@ -68,20 +68,53 @@ php craft rawsearch/api-key/generate           # generate a new API key
             {% for result in search.results %}
                 <li>
                     <a href="{{ result.url }}">{{ result.title }}</a>
-                    {% for extract in result.extracts %}
-                        {% if loop.first and not extract.isAtStart %}…{% endif %}
-                        {{ extract.text|raw }}
-                        {% if not loop.last or not extract.isAtEnd %}…{% endif %}
-                    {% endfor %}
+
+                    {% if result.extracts ?? false %}
+                        {# "…" where the text was cut, " … " between the snippets #}
+                        <p>
+                            {%- for extract in result.extracts -%}
+                                {%- if loop.first and not extract.isAtStart %}…{% endif -%}
+                                {{- extract.text|raw -}}
+                                {%- if not loop.last %} … {% elseif not extract.isAtEnd %}…{% endif -%}
+                            {%- endfor -%}
+                        </p>
+                    {% else %}
+                        {# no snippet, e.g. only the title matched: show a description instead if you want
+                           (a field of your own or the description of your SEO plugin) #}
+                        {% set layout = result.element.fieldLayout %}
+                        {% set description = layout and layout.getFieldByHandle('description') ? result.element.description : null %}
+                        {% if description %}
+                            <p>{{ description }}</p>
+                        {% endif %}
+                    {% endif %}
                 </li>
             {% endfor %}
         </ul>
 
         {% set pagination = search.pagination %}
-        {% if pagination.prevUrl %}<a href="{{ pagination.prevUrl }}">Previous</a>{% endif %}
-        {% if pagination.nextUrl %}<a href="{{ pagination.nextUrl }}">Next</a>{% endif %}
+        {% if pagination.totalPages > 1 %}
+            <nav class="pagination">
+                {% if pagination.prevUrl %}
+                    <a href="{{ pagination.prevUrl }}">Previous</a>
+                {% endif %}
+                {% for page, url in pagination.getPrevUrls(3) %}
+                    <a href="{{ url }}">{{ page }}</a>
+                {% endfor %}
+                <span aria-current="page">{{ pagination.currentPage }}</span>
+                {% for page, url in pagination.getNextUrls(3) %}
+                    <a href="{{ url }}">{{ page }}</a>
+                {% endfor %}
+                {% if pagination.nextUrl %}
+                    <a href="{{ pagination.nextUrl }}">Next</a>
+                {% endif %}
+            </nav>
+        {% endif %}
     {% else %}
         <p>No results found.</p>
+    {% endif %}
+{% else %}
+    {% if query %}
+        <p>Please enter at least 3 characters.</p>
     {% endif %}
 {% endif %}
 ```
@@ -200,6 +233,7 @@ return [
 ## Events
 
 ```php
+use Craft;
 use oncode\rawsearch\events\DbQueryEvent;
 use oncode\rawsearch\events\ElementQueryEvent;
 use oncode\rawsearch\events\IndexElementEvent;
@@ -217,9 +251,21 @@ Event::on(Search::class, Search::EVENT_MODIFY_ELEMENT_QUERY, function(ElementQue
     }
 });
 
-// modify the db query that searches the index (e.g. join tables)
+// don't find news entries that are older than 3 years
+Event::on(Search::class, Search::EVENT_MODIFY_ELEMENT_QUERY, function(ElementQueryEvent $event) {
+    $news = Craft::$app->getEntries()->getSectionByHandle('news');
+
+    if ($news && $event->query instanceof \craft\elements\db\EntryQuery) {
+        $event->query->andWhere(['or',
+            ['not', ['entries.sectionId' => $news->id]],
+            ['>=', 'entries.postDate', \craft\helpers\Db::prepareDateForDb(new \DateTime('-3 years'))],
+        ]);
+    }
+});
+
+// modify the db query that searches the index, the index table has the alias `rawsearch`
 Event::on(Search::class, Search::EVENT_MODIFY_SEARCH_QUERY, function(DbQueryEvent $event) {
-    $event->dbQuery->andWhere(['not', ['elementId' => [1361, 1362]]]);
+    $event->dbQuery->andWhere(['not', ['rawsearch.elementId' => [1361, 1362]]]);
 });
 
 // add custom results on top (rows without `elementId` are passed through)
@@ -230,6 +276,23 @@ Event::on(Search::class, Search::EVENT_MODIFY_RESULT_ROWS, function(RowsEvent $e
 // boost elements
 Event::on(Sort::class, Sort::EVENT_ADD_WEIGHT_SCORE, function(WeightScoreEvent $event) {
     if ($event->elementRow['elementId'] === 12) {
+        $event->score += 3000;
+    }
+});
+
+// show entries of the "pages" section first:
+// join the section of the entries to the index rows, then use it in the score event
+Event::on(Search::class, Search::EVENT_MODIFY_SEARCH_QUERY, function(DbQueryEvent $event) {
+    $event->dbQuery
+        ->addSelect(['entries.sectionId'])
+        ->leftJoin(['entries' => \craft\db\Table::ENTRIES], '[[entries.id]] = [[rawsearch.elementId]]');
+});
+
+Event::on(Sort::class, Sort::EVENT_ADD_WEIGHT_SCORE, function(WeightScoreEvent $event) {
+    $pages = Craft::$app->getEntries()->getSectionByHandle('pages');
+    $sectionId = $event->elementRow['rows'][0]['sectionId'] ?? null;
+
+    if ($pages && (int)$sectionId === $pages->id) {
         $event->score += 3000;
     }
 });

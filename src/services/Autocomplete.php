@@ -110,18 +110,18 @@ class Autocomplete extends Component
     public function buildSearchQuery(string $normalizedQuery, array $config): Query
     {
         $dbQuery = (new Query())
-            ->select(['elementId', 'type', 'text'])
-            ->from(Table::INDEX)
-            ->where(['siteId' => $config['siteId']])
+            ->select(['rawsearch.elementId', 'rawsearch.type', 'rawsearch.text'])
+            ->from(['rawsearch' => Table::INDEX])
+            ->where(['rawsearch.siteId' => $config['siteId']])
             // slugs repeat the title in lowercase and would distort the spelling of the words
-            ->andWhere(['not', ['attribute' => 'slug']]);
+            ->andWhere(['not', ['rawsearch.attribute' => 'slug']]);
 
         // the query is completed as a whole, so all words have to be there
         $words = explode(' ', $normalizedQuery);
         $dbQuery->andWhere(RawSearch::getInstance()->search->buildWordsCondition($words, false, Search::MODE_WORD_START));
 
         if ($config['elementTypes']) {
-            $dbQuery->andWhere(['type' => $config['elementTypes']]);
+            $dbQuery->andWhere(['rawsearch.type' => $config['elementTypes']]);
         }
 
         $limit = RawSearch::getInstance()->getSettings()->rowLimitAutocompleteSearch;

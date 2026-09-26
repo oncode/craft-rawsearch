@@ -294,6 +294,66 @@ class SearchTest extends TestCase
         $this->assertSame(1, $search['total']);
     }
 
+    public function testReadmeExampleAgeCutoff(): void
+    {
+        // the README example with the fixture section instead of "news"
+        $cutoff = function(string $date) {
+            return function(ElementQueryEvent $event) use ($date) {
+                if ($event->query instanceof EntryQuery) {
+                    $event->query->andWhere(['or',
+                        ['not', ['entries.sectionId' => self::$fixture->section->id]],
+                        ['>=', 'entries.postDate', \craft\helpers\Db::prepareDateForDb(new \DateTime($date))],
+                    ]);
+                }
+            };
+        };
+
+        $this->on(Search::class, Search::EVENT_MODIFY_ELEMENT_QUERY, $cutoff('-3 years'));
+        $this->assertCount(3, $this->titles('quokka'));
+
+        // all fixture entries are older than tomorrow
+        $this->on(Search::class, Search::EVENT_MODIFY_ELEMENT_QUERY, $cutoff('+1 day'));
+        $search = $this->search('quokka');
+        $this->assertSame([], $search['results']);
+        $this->assertSame(0, $search['total']);
+    }
+
+    public function testReadmeExampleSectionBoost(): void
+    {
+        $scores = fn() => array_column($this->search('quokka')['results'], 'score', 'title');
+        $before = $scores();
+
+        $this->on(Search::class, Search::EVENT_MODIFY_SEARCH_QUERY, function(DbQueryEvent $event) {
+            $event->dbQuery
+                ->addSelect(['entries.sectionId'])
+                ->leftJoin(['entries' => \craft\db\Table::ENTRIES], '[[entries.id]] = [[rawsearch.elementId]]');
+        });
+        $this->on(Sort::class, Sort::EVENT_ADD_WEIGHT_SCORE, function(WeightScoreEvent $event) {
+            $sectionId = $event->elementRow['rows'][0]['sectionId'] ?? null;
+
+            if ((int)$sectionId === self::$fixture->section->id) {
+                $event->score += 3000;
+            }
+        });
+
+        $after = $scores();
+
+        foreach ($before as $title => $score) {
+            $this->assertSame($score + 3000, $after[$title], $title);
+        }
+    }
+
+    public function testJoinsDontCauseAmbiguousColumns(): void
+    {
+        $this->on(Search::class, Search::EVENT_MODIFY_SEARCH_QUERY, function(DbQueryEvent $event) {
+            // elements has columns like `type` and `dateCreated` too
+            $event->dbQuery->innerJoin(['elements' => \craft\db\Table::ELEMENTS], '[[elements.id]] = [[rawsearch.elementId]]');
+        });
+
+        $this->assertCount(3, $this->titles('quokka', ['elementTypes' => 'entry']));
+        $this->assertCount(3, $this->titles('ok', ['mode' => Search::MODE_WORD_CONTENT, 'elementTypes' => 'entry']));
+    }
+
     public function testSearchQueryEvent(): void
     {
         $this->on(Search::class, Search::EVENT_MODIFY_SEARCH_QUERY, function(DbQueryEvent $event) {

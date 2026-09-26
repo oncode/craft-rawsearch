@@ -317,13 +317,22 @@ class Search extends Component
 
     /**
      * Builds the db query that searches the index.
+     * The index table has the alias `rawsearch`, so other tables can be joined without ambiguous columns.
      */
     public function buildSearchQuery(string $normalizedQuery, array $config): Query
     {
         $dbQuery = (new Query())
-            ->select(['elementId', 'siteId', 'type', 'attribute', 'fieldId', 'normalizedWords', 'text'])
-            ->from(Table::INDEX)
-            ->where(['siteId' => $config['siteId']]);
+            ->select([
+                'rawsearch.elementId',
+                'rawsearch.siteId',
+                'rawsearch.type',
+                'rawsearch.attribute',
+                'rawsearch.fieldId',
+                'rawsearch.normalizedWords',
+                'rawsearch.text',
+            ])
+            ->from(['rawsearch' => Table::INDEX])
+            ->where(['rawsearch.siteId' => $config['siteId']]);
 
         $limit = RawSearch::getInstance()->getSettings()->rowLimitSearch;
 
@@ -332,7 +341,7 @@ class Search extends Component
         }
 
         if ($config['elementTypes']) {
-            $dbQuery->andWhere(['type' => $config['elementTypes']]);
+            $dbQuery->andWhere(['rawsearch.type' => $config['elementTypes']]);
         }
 
         // AND searches fetch rows matching any word, all words have to be found per element (not per row)
@@ -352,6 +361,7 @@ class Search extends Component
     /**
      * Builds the condition to find the given normalized words.
      * Words in the fulltext index are searched with MATCH, all others with LIKE.
+     * The index table needs the alias `rawsearch`.
      */
     public function buildWordsCondition(array $words, bool $or, int $mode): array
     {
@@ -361,7 +371,7 @@ class Search extends Component
             if ($mode !== self::MODE_WORD_CONTENT && IndexHelper::isFulltextWord($word)) {
                 $param = ':rawsearchWord' . $i;
                 $conditions[] = new \yii\db\Expression(
-                    'MATCH([[normalizedWords]]) AGAINST (' . $param . ' IN BOOLEAN MODE)',
+                    'MATCH([[rawsearch.normalizedWords]]) AGAINST (' . $param . ' IN BOOLEAN MODE)',
                     [$param => $mode === self::MODE_WORD_START ? $word . '*' : $word]
                 );
                 continue;
@@ -373,7 +383,7 @@ class Search extends Component
                 self::MODE_WORD_CONTENT => "%$escaped%",
                 default => "% $escaped%",
             };
-            $conditions[] = ['like', 'normalizedWords', $pattern, false];
+            $conditions[] = ['like', 'rawsearch.normalizedWords', $pattern, false];
         }
 
         return array_merge([$or ? 'or' : 'and'], $conditions);
