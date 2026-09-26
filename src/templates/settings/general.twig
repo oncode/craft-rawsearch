@@ -1,0 +1,43 @@
+{% extends 'rawsearch/_layouts/settings' %}
+{% import '_includes/forms' as forms %}
+
+{% set requiresAdminChanges = true %}
+{% set fullPageForm = allowAdminChanges %}
+
+{% block content %}
+    {{ actionInput('rawsearch/settings/save-general') }}
+    {{ redirectInput('rawsearch/settings/general') }}
+
+    <h2>{{ 'General'|t('rawsearch') }}</h2>
+
+    {{ forms.textField({
+        first: true,
+        label: 'Plugin Name'|t('rawsearch'),
+        instructions: 'How the plugin should be named in the CP'|t('rawsearch'),
+        id: 'name',
+        name: 'settings[name]',
+        value: settings.name,
+        required: true,
+        disabled: not allowAdminChanges,
+    }) }}
+
+    {{ forms.lightswitchField({
+        label: 'Statistic'|t('rawsearch'),
+        instructions: 'When activated, search queries will be stored and shown in the CP (not in dev mode)'|t('rawsearch'),
+        id: 'statistic',
+        name: 'settings[statistic]',
+        on: settings.statistic,
+        disabled: not allowAdminChanges,
+    }) }}
+
+    {{ forms.textField({
+        label: 'API Key'|t('rawsearch'),
+        instructions: 'Key for critical API methods (reindexing, query statistic)'|t('rawsearch'),
+        id: 'apiKey',
+        name: 'settings[apiKey]',
+        value: settings.apiKey,
+        required: true,
+        code: true,
+        disabled: not allowAdminChanges,
+    }) }}
+{% endblock %}

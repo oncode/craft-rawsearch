@@ -1,0 +1,273 @@
+# RawSearch
+
+A highly customizable text search for Craft CMS 5 with weighted results and result snippets.
+
+## Features
+
+* Own search index, configurable in the control panel:
+  * Words that should not be indexed
+  * Field types, fields and element types that should be indexed
+* Weighted sorting: points for (partial) matches in titles and fields, per field and per element type
+* Result snippets with highlighted words and an adjustable word radius
+* Search modes: exact word, word start and word content, words combined with AND or OR
+* Multi-site, Matrix/Neo content is indexed as part of its owner
+* Only live elements are returned (disabled, pending and expired entries are filtered out)
+* Autocomplete
+* JSON API
+* Search statistic (queries are not stored in dev mode)
+* Events to customize indexing, searching and sorting
+* Console commands to build the index
+
+## Requirements
+
+* Craft CMS 5.0+
+* PHP 8.2+
+* MySQL 8 / MariaDB (fulltext index) or PostgreSQL (searches with `LIKE`, slower on big sites)
+
+## Installation
+
+```bash
+composer require oncode/craft-rawsearch
+php craft plugin/install rawsearch
+```
+
+The installation pushes queue jobs that build the search index of the existing content.
+Afterwards the index is kept up to date whenever elements are saved, deleted or restored.
+
+You can rebuild the index anytime:
+
+```bash
+php craft rawsearch/index/all                  # all indexed element types
+php craft rawsearch/index/element-types entry  # specific element types
+php craft rawsearch/index/elements 12,34       # specific elements
+php craft rawsearch/index/all --queue          # push queue jobs instead
+php craft rawsearch/api-key/generate           # generate a new API key
+```
+
+## Usage
+
+```twig
+{% set query = craft.app.request.getParam('query') %}
+
+<form action="{{ url('search') }}">
+    <input type="search" name="query" value="{{ query }}">
+    <button>Search</button>
+</form>
+
+{% if query|length > 2 %}
+    {% set search = craft.rawSearch.search({
+        query: query,
+        resultsPerPage: 10,
+        extract: { radius: 4 },
+    }) %}
+
+    {% if search.total %}
+        <p>{{ search.total }} results for "{{ query }}"</p>
+
+        <ul>
+            {% for result in search.results %}
+                <li>
+                    <a href="{{ result.url }}">{{ result.title }}</a>
+                    {% for extract in result.extracts %}
+                        {% if loop.first and not extract.isAtStart %}…{% endif %}
+                        {{ extract.text|raw }}
+                        {% if not loop.last or not extract.isAtEnd %}…{% endif %}
+                    {% endfor %}
+                </li>
+            {% endfor %}
+        </ul>
+
+        {% set pagination = search.pagination %}
+        {% if pagination.prevUrl %}<a href="{{ pagination.prevUrl }}">Previous</a>{% endif %}
+        {% if pagination.nextUrl %}<a href="{{ pagination.nextUrl }}">Next</a>{% endif %}
+    {% else %}
+        <p>No results found.</p>
+    {% endif %}
+{% endif %}
+```
+
+`extract.text` is HTML escaped, only the wrap code (`<mark>`) is raw, so `|raw` is safe.
+
+### Search params
+
+| Param | Default | Description |
+| --- | --- | --- |
+| `query` | | Query to search for (required). |
+| `site` | current site | Site handle, id or model. |
+| `elementTypes` | all | Element types, as class names or short names (`['entry', 'asset']` or `'Entry,Asset'`). |
+| `or` | `false` | Whether the words are combined with OR instead of AND. With AND, every word has to be found somewhere in the element. |
+| `mode` | `2` | `1` = exact word, `2` = word start, `3` = word content. |
+| `resultsPerPage` | `10` | Results per page. |
+| `page` | current page | Page to show, defaults to the page of the request (`page-trigger`). |
+| `weightedSort` | `true` | Sort by the weight configuration. |
+| `status` | `'default'` | Status passed to the element queries. `'default'` uses the default of the element type (e.g. live entries only), `null` returns any status. |
+| `statistic` | `true` | Store the query for the statistic (if enabled in the settings). |
+| `extract.enabled` | `true` | Whether snippets are generated. |
+| `extract.radius` | `4` | Words shown around a found word. |
+| `extract.limit` | `10` | Max snippets per element. |
+| `extract.wrap` | `<mark>{phrase}</mark>` | Code wrapped around the found words. |
+
+### Result
+
+`search` returns `results`, `pagination` (a `Paginate` variable like `{% paginate %}` provides) and `total`.
+Each result contains:
+
+* `element` – the element
+* `elementId`, `type`, `title`, `url`, `uri`, `slug`
+* `score` – weight score (in dev mode `_score` explains how it was calculated)
+* `wordsFound` – number of found words in the element
+* `extracts` – snippets of all fields (`nr`, `text`, `textParts`, `words`, `isAtStart`, `isAtEnd`)
+* `rows` – the matching index rows (`attribute`, `fieldId`, `snippets`) if you need the snippets per field
+
+### Other template functions
+
+```twig
+{# autocomplete: words starting with "env" #}
+{% set words = craft.rawSearch.autocomplete({ query: 'env', site: 'en', limit: 8 }) %}
+{% for word in words %}{{ word.word }} ({{ word.elements|length }}){% endfor %}
+
+{# results rendered with the same template the API uses for html=1 #}
+{{ craft.rawSearch.renderResults(search, query) }}
+
+{# most searched queries #}
+{% set top = craft.rawSearch.mostSearched({ site: 'en', limit: 10 }) %}
+
+{# settings #}
+{{ craft.rawSearch.settings.titleMatchWeight }}
+```
+
+## JSON API
+
+All actions accept GET or POST params.
+
+### Search
+
+```
+/actions/rawsearch/api/search?query=Test
+```
+
+Params: `query`, `site`, `elementTypes` (comma separated), `or`, `mode`, `page`, `resultsPerPage`, `weightedSort`, `extract` (array or `0` to disable) and `html`.
+
+With `html=1` the result is rendered HTML. The default template can be overridden by creating `templates/rawsearch/_search.twig` (variables: `search`, `query`). `craft.rawSearch.renderResults()` uses the same template, so server rendered and AJAX results look the same.
+
+Response: `error`, `total`, `pagination` (`first`, `last`, `total`, `currentPage`, `totalPages`) and `result`. Errors return `error: true` with a `message` and a 400/500 status.
+
+### Autocomplete
+
+```
+/actions/rawsearch/api/autocomplete?query=Tes&limit=8
+```
+
+Params: `query`, `site`, `elementTypes`, `limit` (keeps the most frequent words).
+
+Returns the words starting with the query (alphabetically, with their original spelling):
+
+```json
+{"error": false, "result": [{"word": "Test", "results": 5, "elements": [{"id": 12, "type": "craft\\elements\\Entry", "count": 3}]}]}
+```
+
+* `results` – number of results a search for the word finds. The search matches word starts, so this includes elements with longer words (`Tests`, `Testing`).
+* `elements` – the elements that contain exactly this word, `count` is the number of occurrences in the element.
+
+Only words of live elements are returned. Words that differ in case only are merged.
+
+### Actions that require the API key
+
+The API key is generated on installation and can be found under Settings → General (admins only). Logged in users with the matching permission don't need the key.
+
+```
+/actions/rawsearch/api/reindex-elements?elementIds=1,2,3&key=API_KEY
+/actions/rawsearch/api/reindex-element-types?elementTypes=entry,asset&key=API_KEY
+/actions/rawsearch/api/reindex-element-types?all=1&key=API_KEY
+/actions/rawsearch/api/queries?site=en&limit=10&key=API_KEY
+```
+
+## Configuration
+
+Create `config/rawsearch.php` to override settings:
+
+```php
+<?php
+
+return [
+    'memoryLimit' => '512M',          // memory limit while indexing
+    'rowLimitSearch' => null,         // max index rows fetched per search
+    'rowLimitAutocompleteSearch' => null,
+    'blacklistedWords' => 'and,or,the',
+];
+```
+
+## Events
+
+```php
+use oncode\rawsearch\events\DbQueryEvent;
+use oncode\rawsearch\events\ElementQueryEvent;
+use oncode\rawsearch\events\IndexElementEvent;
+use oncode\rawsearch\events\RowsEvent;
+use oncode\rawsearch\events\WeightScoreEvent;
+use oncode\rawsearch\services\Index;
+use oncode\rawsearch\services\Search;
+use oncode\rawsearch\services\Sort;
+use yii\base\Event;
+
+// only search entries of a specific section
+Event::on(Search::class, Search::EVENT_MODIFY_ELEMENT_QUERY, function(ElementQueryEvent $event) {
+    if ($event->query instanceof \craft\elements\db\EntryQuery) {
+        $event->query->section('news');
+    }
+});
+
+// modify the db query that searches the index (e.g. join tables)
+Event::on(Search::class, Search::EVENT_MODIFY_SEARCH_QUERY, function(DbQueryEvent $event) {
+    $event->dbQuery->andWhere(['not', ['elementId' => [1361, 1362]]]);
+});
+
+// add custom results on top (rows without `elementId` are passed through)
+Event::on(Search::class, Search::EVENT_MODIFY_RESULT_ROWS, function(RowsEvent $event) {
+    array_unshift($event->rows, ['type' => 'SPECIAL', 'title' => 'Contact', 'url' => '/contact']);
+});
+
+// boost elements
+Event::on(Sort::class, Sort::EVENT_ADD_WEIGHT_SCORE, function(WeightScoreEvent $event) {
+    if ($event->elementRow['elementId'] === 12) {
+        $event->score += 3000;
+    }
+});
+
+// don't index an element
+Event::on(Index::class, Index::EVENT_BEFORE_INDEX_ELEMENT, function(IndexElementEvent $event) {
+    $event->isValid = $event->element->id !== 25;
+});
+```
+
+| Class | Event | Event class |
+| --- | --- | --- |
+| `Search` | `EVENT_BEFORE_SEARCH`, `EVENT_AFTER_SEARCH` | `SearchEvent` |
+| `Search` | `EVENT_MODIFY_SEARCH_QUERY` | `DbQueryEvent` |
+| `Search` | `EVENT_MODIFY_ELEMENT_QUERY` | `ElementQueryEvent` |
+| `Search` | `EVENT_MODIFY_RESULT_ROWS` (all rows, sorted), `EVENT_MODIFY_RESULTS` (current page) | `RowsEvent` |
+| `Sort` | `EVENT_ADD_WEIGHT_ROW_SCORE`, `EVENT_ADD_WEIGHT_SCORE` | `WeightScoreEvent` |
+| `Autocomplete` | `EVENT_BEFORE_AUTOCOMPLETE`, `EVENT_AFTER_AUTOCOMPLETE` | `SearchEvent` |
+| `Autocomplete` | `EVENT_MODIFY_AUTOCOMPLETE_QUERY` | `DbQueryEvent` |
+| `Autocomplete` | `EVENT_MODIFY_WORD_ELEMENT_DATA` | `AutocompleteWordElementEvent` |
+| `Autocomplete` | `EVENT_MODIFY_TERMS` | `RowsEvent` |
+| `Index` | `EVENT_BEFORE_INDEX_ELEMENT`, `EVENT_AFTER_INDEX_ELEMENT`, `EVENT_MODIFY_ATTRIBUTE_VALUES`, `EVENT_MODIFY_FIELD_VALUES`, `EVENT_MODIFY_ROWS` | `IndexElementEvent` |
+
+## Permissions
+
+* Access statistic
+* Edit settings
+  * Indexing
+  * Weight
+
+## Tests
+
+The tests run against a Craft installation that has the plugin installed (they create their own site, fields, section and entries with unusual words, so existing content doesn't interfere):
+
+```bash
+cd /path/to/craft
+composer require --dev phpunit/phpunit:^11
+CRAFT_BASE_PATH=$PWD vendor/bin/phpunit -c /path/to/rawsearch/phpunit.xml.dist
+```
+
+Set `RAWSEARCH_TEST_URL` to the site URL of that installation to run the API tests too, they are skipped otherwise.

@@ -1,0 +1,50 @@
+{% extends 'rawsearch/_layouts/statistic' %}
+
+{% set modes = {1: 'Exact word'|t('rawsearch'), 2: 'Word start'|t('rawsearch'), 3: 'Word content'|t('rawsearch')} %}
+
+{% block content %}
+    {% if not craft.rawSearch.settings.statistic %}
+        <p class="warning with-icon">{{ 'The statistic is disabled in the plugin settings.'|t('rawsearch') }}</p>
+    {% elseif craft.app.config.general.devMode %}
+        <p class="notice with-icon">{{ 'Search queries are not stored while dev mode is enabled.'|t('rawsearch') }}</p>
+    {% endif %}
+
+    {% if queries|length %}
+        <table class="data fullwidth">
+            <thead>
+                <tr>
+                    <th>{{ 'Query'|t('rawsearch') }}</th>
+                    <th>{{ 'Results'|t('rawsearch') }}</th>
+                    <th>{{ 'Mode'|t('rawsearch') }}</th>
+                    {% if craft.app.isMultiSite %}<th>{{ 'Site'|t('app') }}</th>{% endif %}
+                    <th>{{ 'Date'|t('rawsearch') }}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for query in queries %}
+                    <tr>
+                        <td>{{ query.query }}</td>
+                        <td>{{ query.results|number }}</td>
+                        <td>{{ modes[query.mode] ?? query.mode }}{% if query.or %} ({{ 'or'|t('rawsearch') }}){% endif %}</td>
+                        {% if craft.app.isMultiSite %}<td>{{ (craft.app.sites.getSiteById(query.siteId).name ?? '')|t('site') }}</td>{% endif %}
+                        <td>{{ query.dateCreated|datetime('short') }}</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        {% if totalPages > 1 %}
+            <div class="flex pagination" style="margin-top: 14px;">
+                {% if page > 1 %}
+                    <a class="btn" href="{{ url(currentPath, {searchSite: siteHandle, page: page - 1}|filter) }}">← {{ 'Previous Page'|t('rawsearch') }}</a>
+                {% endif %}
+                <span class="light">{{ '{first}–{last} of {total}'|t('rawsearch', {first: (page - 1) * perPage + 1, last: min(page * perPage, total), total: total}) }}</span>
+                {% if page < totalPages %}
+                    <a class="btn" href="{{ url(currentPath, {searchSite: siteHandle, page: page + 1}|filter) }}">{{ 'Next Page'|t('rawsearch') }} →</a>
+                {% endif %}
+            </div>
+        {% endif %}
+    {% else %}
+        <p class="zilch">{{ 'No search queries stored yet.'|t('rawsearch') }}</p>
+    {% endif %}
+{% endblock %}

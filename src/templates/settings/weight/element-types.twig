@@ -1,0 +1,37 @@
+{% extends 'rawsearch/_layouts/settings' %}
+{% import '_includes/forms' as forms %}
+
+{% set fullPageForm = true %}
+
+{% block content %}
+    {{ actionInput('rawsearch/settings/save-element-type-weights') }}
+    {{ redirectInput('rawsearch/settings/weight/element-types') }}
+
+    <h2>{{ 'Element Types'|t('rawsearch') }}</h2>
+    <p>{{ 'Decide how much each element type should count.'|t('rawsearch') }}</p>
+
+    <table class="data fullwidth rawsearch-table">
+        <thead>
+            <tr>
+                <th class="thin">{{ 'Weight'|t('rawsearch') }}</th>
+                <th>{{ 'Element Type'|t('rawsearch') }}</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for option in elementTypes %}
+                {% set elementType = option.class %}
+                <tr>
+                    <td class="thin">
+                        {{ forms.text({
+                            type: 'number',
+                            name: 'elementTypes[' ~ elementType ~ ']',
+                            value: matchWeights[elementType] ?? settings.elementTypeMatchWeight,
+                            size: 8,
+                        }) }}
+                    </td>
+                    <td>{{ option.name }} <span class="light">{{ elementType }}</span></td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+{% endblock %}

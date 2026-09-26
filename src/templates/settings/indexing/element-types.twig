@@ -1,0 +1,48 @@
+{% extends 'rawsearch/_layouts/settings' %}
+{% import '_includes/forms' as forms %}
+
+{% set fullPageForm = true %}
+
+{% block content %}
+    {{ actionInput('rawsearch/settings/save-element-type-indexes') }}
+    {{ redirectInput('rawsearch/settings/indexing/element-types') }}
+
+    <h2>{{ 'Element Types'|t('rawsearch') }}</h2>
+    <p>{{ 'Choose the element types which you want to be indexed. Nested elements (e.g. Matrix entries) are indexed as part of their owner.'|t('rawsearch') }}</p>
+
+    <table class="data fullwidth rawsearch-table">
+        <thead>
+            <tr>
+                <th class="thin">{{ 'Indexed'|t('rawsearch') }}</th>
+                <th>{{ 'Element Type'|t('rawsearch') }}</th>
+                <th class="thin"></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for option in elementTypes %}
+                {% set elementType = option.class %}
+                {% set indexed = elementType not in blacklistedElementTypes %}
+                <tr>
+                    <td class="thin">
+                        {{ forms.lightswitch({
+                            name: 'elementTypes[' ~ elementType ~ ']',
+                            on: indexed,
+                        }) }}
+                    </td>
+                    <td>{{ option.name }} <span class="light">{{ elementType }}</span></td>
+                    <td class="thin">
+                        {% if indexed %}
+                            <button type="button" class="btn small formsubmit"
+                                data-form="false"
+                                data-action="rawsearch/settings/reindex"
+                                data-params="{{ {elementType: elementType}|json_encode }}"
+                                data-redirect="{{ 'rawsearch/settings/indexing/element-types'|hash }}">
+                                {{ 'Update search index'|t('rawsearch') }}
+                            </button>
+                        {% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+{% endblock %}

@@ -1,0 +1,36 @@
+{% extends '_layouts/cp' %}
+
+{% set selectedSubnavItem = 'statistic' %}
+{% set title = 'Statistic'|t('rawsearch') %}
+{% set currentPath = craft.app.request.pathInfo %}
+{% set siteHandle = selectedSite.handle ?? null %}
+
+{% block sidebar %}
+    <nav>
+        <ul>
+            {% for path, label in {
+                'rawsearch/statistic/queries': 'Queries'|t('rawsearch'),
+                'rawsearch/statistic/top': 'Top queries'|t('rawsearch'),
+            } %}
+                <li class="heading"><span>{{ label }}</span></li>
+                <li><a href="{{ url(path) }}"{% if currentPath == path and not siteHandle %} class="sel"{% endif %}>{{ 'All Sites'|t('rawsearch') }}</a></li>
+                {% if craft.app.isMultiSite %}
+                    {% for site in craft.app.sites.allSites %}
+                        <li><a href="{{ url(path, {searchSite: site.handle}) }}"{% if currentPath == path and siteHandle == site.handle %} class="sel"{% endif %}>{{ site.name|t('site') }}</a></li>
+                    {% endfor %}
+                {% endif %}
+            {% endfor %}
+        </ul>
+    </nav>
+{% endblock %}
+
+{% block actionButton %}
+    <button type="button" class="btn formsubmit"
+        data-form="false"
+        data-action="rawsearch/statistic/clear"
+        data-params="{{ {searchSite: siteHandle}|json_encode }}"
+        data-confirm="{{ 'Are you sure you want to delete the stored search queries?'|t('rawsearch') }}"
+        data-redirect="{{ currentPath|hash }}">
+        {{ 'Delete queries'|t('rawsearch') }}
+    </button>
+{% endblock %}

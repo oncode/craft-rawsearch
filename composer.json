@@ -1,0 +1,36 @@
+{
+    "name": "oncode/craft-rawsearch",
+    "description": "Highly customizable text search with weighted results and result snippets for Craft CMS",
+    "type": "craft-plugin",
+    "keywords": [
+        "craft",
+        "cms",
+        "craftcms",
+        "craft-plugin",
+        "search",
+        "rawsearch"
+    ],
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Manuel Sommerhalder",
+            "homepage": "https://oncode.ch"
+        }
+    ],
+    "require": {
+        "php": "^8.2",
+        "craftcms/cms": "^5.0.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "oncode\\rawsearch\\": "src/"
+        }
+    },
+    "extra": {
+        "name": "RawSearch",
+        "handle": "rawsearch",
+        "developer": "Manuel Sommerhalder",
+        "developerUrl": "https://oncode.ch",
+        "class": "oncode\\rawsearch\\RawSearch"
+    }
+}

@@ -1,0 +1,23 @@
+{% extends 'rawsearch/_layouts/settings' %}
+{% import '_includes/forms' as forms %}
+
+{% set requiresAdminChanges = true %}
+{% set fullPageForm = allowAdminChanges %}
+
+{% block content %}
+    {{ actionInput('rawsearch/settings/save-settings') }}
+    {{ redirectInput('rawsearch/settings/indexing/words') }}
+
+    <h2>{{ 'Words'|t('rawsearch') }}</h2>
+    <p>{{ "Write down the words you don't want to be indexed."|t('rawsearch') }}</p>
+
+    {{ forms.textareaField({
+        id: 'blacklistedWords',
+        name: 'settings[blacklistedWords]',
+        value: settings.blacklistedWords,
+        label: 'Blacklisted words'|t('rawsearch'),
+        instructions: 'A comma separated word list'|t('rawsearch'),
+        rows: 6,
+        disabled: not allowAdminChanges,
+    }) }}
+{% endblock %}

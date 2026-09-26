@@ -1,0 +1,44 @@
+{#
+ # Default results template, used by the JSON API with `html=1` and craft.rawSearch.renderResults().
+ # Override it by creating `templates/rawsearch/_search.twig` in your project (variables: `search`, `query`).
+ #}
+{% if search.results|length > 0 %}
+
+    <p>{{ '{total} results found for "{query}"'|t('rawsearch', {total: search.total, query: query}) }}</p>
+
+    {% for result in search.results %}
+        <div class="result">
+            <a href="{{ result.url }}" class="title">{{ result.title }}</a>
+
+            {% if result.wordsFound ?? false %}
+                {# "…" is attached to the text where it was cut, extracts are separated by " … " #}
+                <p>
+                    {%- for extract in result.extracts -%}
+                        {%- if loop.first and not extract.isAtStart %}…{% endif -%}
+                        {{- extract.text|raw -}}
+                        {%- if not loop.last %} … {% elseif not extract.isAtEnd %}…{% endif -%}
+                    {%- endfor -%}
+                </p>
+            {% endif %}
+        </div>
+    {% endfor %}
+
+    {% set pagination = search.pagination %}
+    {% if pagination.totalPages > 1 %}
+        <p>{{ 'Page {page} of {pages}'|t('rawsearch', {page: pagination.currentPage, pages: pagination.totalPages}) }}</p>
+
+        {# data-page is for AJAX requests, the links for page loads (page URLs need a web request) #}
+        {% set withUrls = not craft.app.request.isConsoleRequest %}
+        {% if pagination.currentPage > 1 %}
+            <a class="nav" data-page="{{ pagination.currentPage - 1 }}" href="{{ withUrls ? pagination.prevUrl : '#' }}">&laquo; {{ 'Previous Page'|t('rawsearch') }}</a>
+        {% endif %}
+        {% if pagination.currentPage < pagination.totalPages %}
+            <a class="nav" data-page="{{ pagination.currentPage + 1 }}" href="{{ withUrls ? pagination.nextUrl : '#' }}">{{ 'Next Page'|t('rawsearch') }} &raquo;</a>
+        {% endif %}
+    {% endif %}
+
+{% else %}
+
+    <p>{{ 'No results found.'|t('rawsearch') }}</p>
+
+{% endif %}

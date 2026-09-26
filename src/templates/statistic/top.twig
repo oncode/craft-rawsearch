@@ -1,0 +1,50 @@
+{% extends 'rawsearch/_layouts/statistic' %}
+
+{% block content %}
+    <div class="flex" style="margin-bottom: 20px;">
+        {% for value, label in {0: 'All time'|t('rawsearch'), 7: 'Last 7 days'|t('rawsearch'), 30: 'Last 30 days'|t('rawsearch'), 365: 'Last year'|t('rawsearch')} %}
+            <a class="btn small{% if days == value %} active{% endif %}" href="{{ url(currentPath, {searchSite: siteHandle, days: value ?: null}|filter) }}">{{ label }}</a>
+        {% endfor %}
+    </div>
+
+    {% if queries|length %}
+        {% set max = queries|first.number %}
+
+        <h2>{{ 'Most searched queries'|t('rawsearch') }}</h2>
+        <table class="data fullwidth rawsearch-top">
+            <thead>
+                <tr>
+                    <th>{{ 'Query'|t('rawsearch') }}</th>
+                    <th class="rawsearch-bar-col">{{ 'Number'|t('rawsearch') }}</th>
+                    <th>{{ 'Results'|t('rawsearch') }}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for query in queries %}
+                    <tr>
+                        <td>{{ query.query }}</td>
+                        <td class="rawsearch-bar-col">
+                            <div class="rawsearch-bar" style="width: {{ (query.number / max * 100)|round(1) }}%"></div>
+                            <span>{{ query.number|number }}</span>
+                        </td>
+                        <td>
+                            {% if query.results == 0 %}
+                                <span class="error">{{ 'No results'|t('rawsearch') }}</span>
+                            {% else %}
+                                {{ query.results|number }}
+                            {% endif %}
+                        </td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        {% css %}
+            .rawsearch-top .rawsearch-bar-col { width: 50%; }
+            .rawsearch-top .rawsearch-bar-col > * { vertical-align: middle; }
+            .rawsearch-bar { display: inline-block; height: 12px; max-width: calc(100% - 60px); margin-right: 8px; border-radius: 3px; background: var(--link-color, #0b69a3); opacity: .7; }
+        {% endcss %}
+    {% else %}
+        <p class="zilch">{{ 'No search queries stored yet.'|t('rawsearch') }}</p>
+    {% endif %}
+{% endblock %}

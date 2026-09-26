@@ -1,0 +1,37 @@
+{% extends 'rawsearch/_layouts/settings' %}
+{% import '_includes/forms' as forms %}
+
+{% set requiresAdminChanges = true %}
+{% set fullPageForm = allowAdminChanges %}
+
+{% block content %}
+    {{ actionInput('rawsearch/settings/save-field-types') }}
+    {{ redirectInput('rawsearch/settings/indexing/field-types') }}
+
+    <h2>{{ 'Field Types'|t('rawsearch') }}</h2>
+    <p>{{ 'Choose the field types which you want to be indexed. The fields inside of Matrix fields are indexed if Matrix is indexed.'|t('rawsearch') }}</p>
+
+    <table class="data fullwidth rawsearch-table">
+        <thead>
+            <tr>
+                <th class="thin">{{ 'Indexed'|t('rawsearch') }}</th>
+                <th>{{ 'Field Type'|t('rawsearch') }}</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for option in fieldTypes %}
+                {% set fieldType = option.class %}
+                <tr>
+                    <td class="thin">
+                        {{ forms.lightswitch({
+                            name: 'fieldTypes[' ~ fieldType ~ ']',
+                            on: fieldType in settings.whitelistedFieldTypes,
+                            disabled: not allowAdminChanges,
+                        }) }}
+                    </td>
+                    <td>{{ option.name }} <span class="light">{{ fieldType }}</span></td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+{% endblock %}

@@ -1,0 +1,40 @@
+{% extends 'rawsearch/_layouts/settings' %}
+{% import '_includes/forms' as forms %}
+
+{% set fullPageForm = fields|length > 0 %}
+
+{% block content %}
+    {{ actionInput('rawsearch/settings/save-field-indexes') }}
+    {{ redirectInput('rawsearch/settings/indexing/fields') }}
+
+    <h2>{{ 'Fields'|t('rawsearch') }}</h2>
+    <p>{{ 'Choose the fields which you want to be indexed. Only fields of indexed field types are listed.'|t('rawsearch') }}</p>
+
+    {% if fields|length %}
+        <table class="data fullwidth rawsearch-table">
+            <thead>
+                <tr>
+                    <th class="thin">{{ 'Indexed'|t('rawsearch') }}</th>
+                    <th>{{ 'Field'|t('rawsearch') }}</th>
+                    <th>{{ 'Field Type'|t('rawsearch') }}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for field in fields %}
+                    <tr>
+                        <td class="thin">
+                            {{ forms.lightswitch({
+                                name: 'fields[' ~ field.id ~ ']',
+                                on: field.id not in blacklistedFieldIds,
+                            }) }}
+                        </td>
+                        <td>{{ field.name }} <span class="light code">{{ field.handle }}</span></td>
+                        <td>{{ field.displayName() }}</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p class="zilch">{{ 'No fields of indexed field types exist yet.'|t('rawsearch') }}</p>
+    {% endif %}
+{% endblock %}

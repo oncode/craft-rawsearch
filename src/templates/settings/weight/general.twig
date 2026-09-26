@@ -1,0 +1,33 @@
+{% extends 'rawsearch/_layouts/settings' %}
+{% import '_includes/forms' as forms %}
+
+{% set requiresAdminChanges = true %}
+{% set fullPageForm = allowAdminChanges %}
+
+{% block content %}
+    {{ actionInput('rawsearch/settings/save-settings') }}
+    {{ redirectInput('rawsearch/settings/weight/general') }}
+
+    <h2>{{ 'Default Weights'|t('rawsearch') }}</h2>
+    <p>{{ 'Points added to the score of an element, the elements with the highest score are shown first.'|t('rawsearch') }}</p>
+
+    {% for key, info in {
+        titleMatchWeight: ['Title match', 'Points for every word matched in a title'],
+        partialTitleMatchWeight: ['Partial title match', 'Points for every partial word matched in a title'],
+        fieldMatchWeight: ['Field match', 'Points for every word matched in a field'],
+        partialFieldMatchWeight: ['Partial field match', 'Points for every partial word matched in a field'],
+        elementTypeMatchWeight: ['Element type match', 'Points for matched element type'],
+    } %}
+        {{ forms.textField({
+            type: 'number',
+            id: key,
+            name: 'settings[' ~ key ~ ']',
+            value: attribute(settings, key),
+            label: info[0]|t('rawsearch'),
+            instructions: info[1]|t('rawsearch'),
+            required: true,
+            size: 8,
+            disabled: not allowAdminChanges,
+        }) }}
+    {% endfor %}
+{% endblock %}

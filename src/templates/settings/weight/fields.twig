@@ -1,0 +1,51 @@
+{% extends 'rawsearch/_layouts/settings' %}
+{% import '_includes/forms' as forms %}
+
+{% set fullPageForm = fields|length > 0 %}
+
+{% block content %}
+    {{ actionInput('rawsearch/settings/save-field-weights') }}
+    {{ redirectInput('rawsearch/settings/weight/fields') }}
+
+    <h2>{{ 'Fields'|t('rawsearch') }}</h2>
+    <p>{{ 'Decide how much each field should count. Fields inside of Matrix fields are listed here too.'|t('rawsearch') }}</p>
+
+    {% if fields|length %}
+        <table class="data fullwidth rawsearch-table">
+            <thead>
+                <tr>
+                    <th class="thin"><abbr title="{{ 'Weight on match'|t('rawsearch') }}">{{ 'WeightOnMatchShort'|t('rawsearch') }}</abbr></th>
+                    <th class="thin"><abbr title="{{ 'Weight on partial match'|t('rawsearch') }}">{{ 'WeightOnPartialMatchShort'|t('rawsearch') }}</abbr></th>
+                    <th>{{ 'Field'|t('rawsearch') }}</th>
+                    <th>{{ 'Field Type'|t('rawsearch') }}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for field in fields %}
+                    <tr>
+                        <td class="thin">
+                            {{ forms.text({
+                                type: 'number',
+                                name: 'fields[' ~ field.id ~ '][matchWeight]',
+                                value: matchWeights[field.id].exact ?? settings.fieldMatchWeight,
+                                size: 6,
+                            }) }}
+                        </td>
+                        <td class="thin">
+                            {{ forms.text({
+                                type: 'number',
+                                name: 'fields[' ~ field.id ~ '][partialMatchWeight]',
+                                value: matchWeights[field.id].partial ?? settings.partialFieldMatchWeight,
+                                size: 6,
+                            }) }}
+                        </td>
+                        <td>{{ field.name }} <span class="light code">{{ field.handle }}</span></td>
+                        <td>{{ field.displayName() }}</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p class="zilch">{{ 'No indexed fields exist yet.'|t('rawsearch') }}</p>
+    {% endif %}
+{% endblock %}

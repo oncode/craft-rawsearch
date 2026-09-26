@@ -1,0 +1,76 @@
+{% extends '_layouts/cp' %}
+
+{% set selectedSubnavItem = 'settings' %}
+{% set title = 'Settings'|t('rawsearch') %}
+{% set currentPath = craft.app.request.pathInfo %}
+{% set allowAdminChanges = allowAdminChanges ?? true %}
+
+{% set navGroups = [] %}
+
+{% if currentUser.admin %}
+    {% set navGroups = navGroups|merge([{
+        heading: 'Plugin'|t('rawsearch'),
+        items: {
+            'rawsearch/settings/general': 'General'|t('rawsearch'),
+        },
+    }]) %}
+{% endif %}
+
+{% if currentUser.can('rawsearch-editWeightSettings') %}
+    {% set navGroups = navGroups|merge([{
+        heading: 'Weight'|t('rawsearch'),
+        items: {
+            'rawsearch/settings/weight/general': 'General'|t('rawsearch'),
+            'rawsearch/settings/weight/element-types': 'Element Types'|t('rawsearch'),
+            'rawsearch/settings/weight/fields': 'Fields'|t('rawsearch'),
+        },
+    }]) %}
+{% endif %}
+
+{% if currentUser.can('rawsearch-editIndexSettings') %}
+    {% set navGroups = navGroups|merge([{
+        heading: 'Indexing'|t('rawsearch'),
+        items: {
+            'rawsearch/settings/indexing/words': 'Words'|t('rawsearch'),
+            'rawsearch/settings/indexing/field-types': 'Field Types'|t('rawsearch'),
+            'rawsearch/settings/indexing/fields': 'Fields'|t('rawsearch'),
+            'rawsearch/settings/indexing/element-types': 'Element Types'|t('rawsearch'),
+        },
+    }]) %}
+{% endif %}
+
+{% block sidebar %}
+    <nav>
+        <ul>
+            {% for group in navGroups %}
+                <li class="heading"><span>{{ group.heading }}</span></li>
+                {% for path, label in group.items %}
+                    <li><a href="{{ url(path) }}"{% if currentPath == path %} class="sel"{% endif %}>{{ label }}</a></li>
+                {% endfor %}
+            {% endfor %}
+        </ul>
+    </nav>
+
+    {% if currentUser.can('rawsearch-editIndexSettings') %}
+        <div class="rawsearch-sidebar-action">
+            <button type="button" class="btn formsubmit"
+                data-form="false"
+                data-action="rawsearch/settings/reindex"
+                data-redirect="{{ currentPath|hash }}">
+                {{ 'Update search index'|t('rawsearch') }}
+            </button>
+        </div>
+    {% endif %}
+
+    {% css %}
+        .rawsearch-sidebar-action { padding: 14px 24px; }
+        .rawsearch-table .text { width: 90px; }
+        .rawsearch-table td.thin { width: 1%; white-space: nowrap; }
+    {% endcss %}
+{% endblock %}
+
+{% block contentNotice %}
+    {% if not allowAdminChanges and (requiresAdminChanges ?? false) %}
+        <p class="warning with-icon">{{ 'Settings can’t be changed because admin changes are disallowed in this environment.'|t('rawsearch') }}</p>
+    {% endif %}
+{% endblock %}
