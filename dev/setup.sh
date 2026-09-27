@@ -4,7 +4,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")"
-PORT="${RAWSEARCH_PORT:-8088}"
+PORT="${RAWSEARCH_PORT:-8089}"
 run() { docker compose run --rm -T php "$@"; }
 
 if [ -e site ]; then

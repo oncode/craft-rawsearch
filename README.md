@@ -386,11 +386,14 @@ cd dev
 ./test.sh       # runs all tests, e.g. ./test.sh --filter SearchTest
 ```
 
-* Demo: http://localhost:8088/search (another port: `RAWSEARCH_PORT=8090 ./setup.sh`)
-* Control panel: http://localhost:8088/admin (admin / password123)
+* Demo: http://localhost:8089/search (another port: `RAWSEARCH_PORT=8090 ./setup.sh`)
+* Control panel: http://localhost:8089/admin (admin / password123)
 * Start and stop: `docker compose up -d` / `docker compose stop` in `dev/`
 * Set up from scratch: `docker compose down -v && rm -rf site && ./setup.sh`
 * Queue jobs: `docker compose exec php php artisan queue:work --stop-when-empty`
+
+The environment runs next to the Craft 5 one of version 1.x (port 8088), they use different Docker projects and databases.
+To work on 1.x at the same time, check it out in its own directory, e.g. `git worktree add ../craft-rawsearch-1.x main`, and run its `dev/setup.sh` there.
 
 The plugin is linked into the project, changes apply immediately. The demo templates are in `dev/templates` (linked to `resources/views` of the project), the demo content is created by `dev/seed.php`.
 

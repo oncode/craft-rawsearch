@@ -1,6 +1,7 @@
 # Development environment: Craft CMS 6 with RawSearch installed from the parent directory.
+# Own project name, image, database volume and port, so it runs next to the Craft 5 environment of 1.x.
 # Set up with ./setup.sh, see README "Development and tests".
-name: rawsearch-dev
+name: rawsearch-dev6
 
 services:
   db:
@@ -15,7 +16,7 @@ services:
 
   php:
     build: .
-    image: rawsearch-dev-php
+    image: rawsearch-dev6-php
     working_dir: /app/site
     volumes:
       # dev/ with the Craft project in dev/site
@@ -23,7 +24,7 @@ services:
       # the plugin, installed via a Composer path repository
       - ../:/plugins/rawsearch
     command: php artisan serve --host=0.0.0.0 --port=8080
-    ports: ["${RAWSEARCH_PORT:-8088}:8080"]
+    ports: ["${RAWSEARCH_PORT:-8089}:8080"]
     depends_on: [db]
 
 volumes:
