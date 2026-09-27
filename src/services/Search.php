@@ -45,8 +45,8 @@ class Search extends Component
     /** Allows modifying the results of the current page. */
     public const EVENT_MODIFY_RESULTS = 'modifyResults';
 
-    public const EXTRACT_WORDS = 'words';
     public const EXTRACT_SENTENCES = 'sentences';
+    public const EXTRACT_WORDS = 'words';
 
     public const MODE_EXACT = WordRadiusExtractor::MODE_EXACT;
     public const MODE_WORD_START = WordRadiusExtractor::MODE_WORD_START;
@@ -79,8 +79,8 @@ class Search extends Component
             'radius' => 4,
             'limit' => 10,
             'wrap' => '<mark>{phrase}</mark>',
-            // `words` = the words around the found words (radius), `sentences` = the sentences with the found words
-            'type' => self::EXTRACT_WORDS,
+            // `sentences` = the sentences with the found words, `words` = the words around the found words (radius)
+            'type' => self::EXTRACT_SENTENCES,
             // sentence snippets: max characters, longer sentences are shortened to the radius
             'maxLength' => 200,
         ],
@@ -262,7 +262,7 @@ class Search extends Component
         $config['extract']['enabled'] = (bool)$config['extract']['enabled'];
         $config['extract']['radius'] = max(0, (int)$config['extract']['radius']);
         $config['extract']['limit'] = max(0, (int)$config['extract']['limit']);
-        $config['extract']['type'] = $config['extract']['type'] === self::EXTRACT_SENTENCES ? self::EXTRACT_SENTENCES : self::EXTRACT_WORDS;
+        $config['extract']['type'] = $config['extract']['type'] === self::EXTRACT_WORDS ? self::EXTRACT_WORDS : self::EXTRACT_SENTENCES;
         $config['extract']['maxLength'] = max(20, (int)$config['extract']['maxLength']);
 
         return $config;

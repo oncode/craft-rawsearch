@@ -8,7 +8,7 @@ A highly customizable text search for Craft CMS 5 with weighted results and resu
   * Words that should not be indexed
   * Field types, fields and element types that should be indexed
 * Weighted sorting: points for (partial) matches in titles and fields, per field and per element type
-* Result snippets with highlighted words: an adjustable word radius or whole sentences
+* Result snippets with highlighted words: whole sentences or an adjustable word radius
 * Search modes: exact word, word start and word content, words combined with AND or OR
 * Multi-site, Matrix/Neo content is indexed as part of its owner
 * Only live elements are returned (disabled, pending and expired entries are filtered out)
@@ -58,7 +58,7 @@ php craft rawsearch/api-key/generate           # generate a new API key
     {% set search = craft.rawSearch.search({
         query: query,
         resultsPerPage: 10,
-        extract: { radius: 4 },
+        extract: { type: 'sentences', maxLength: 200 },
     }) %}
 
     {% if search.total %}
@@ -136,11 +136,11 @@ php craft rawsearch/api-key/generate           # generate a new API key
 | `status` | `'default'` | Status passed to the element queries. `'default'` uses the default of the element type (e.g. live entries only), `null` returns any status. |
 | `statistic` | `true` | Store the query for the statistic (if enabled in the settings). |
 | `extract.enabled` | `true` | Whether snippets are generated. |
-| `extract.radius` | `4` | Words shown around a found word. |
+| `extract.type` | `'sentences'` | `'sentences'`: the whole sentences that contain the found words, neighboring sentences are merged. `'words'`: the words around the found words (`radius`). |
+| `extract.maxLength` | `200` | Sentence snippets only: max characters, longer sentences are shortened to the words around the found words (`radius`). |
+| `extract.radius` | `4` | Words shown around a found word (word snippets and shortened sentences). |
 | `extract.limit` | `10` | Max snippets per element. |
 | `extract.wrap` | `<mark>{phrase}</mark>` | Code wrapped around the found words. |
-| `extract.type` | `'words'` | `'words'`: the words around the found words (`radius`). `'sentences'`: the whole sentences that contain the found words, neighboring sentences are merged. |
-| `extract.maxLength` | `200` | Sentence snippets only: max characters, longer sentences are shortened to the words around the found words (`radius`). |
 
 Sentences end at `.`, `!`, `?`, `…` (and `。！？`) followed by a word that doesn't start lowercase, and at line breaks, paragraphs, headings and list items. Abbreviations like `z.B.`, `e.g.`, `Dr.` and dates like `12. Mai` don't end a sentence.
 `isAtStart`/`isAtEnd` of an extract are `false` where text was cut off, show "…" there (like the example above does).
@@ -366,7 +366,7 @@ To leave out evergreen content, e.g. the "pages" section, add `dateEntries.secti
 
 ## Development and tests
 
-`dev/` contains a Docker based Craft installation with the plugin, demo content and a demo search page (autocomplete, AJAX results, word/sentence snippets). It needs Docker only.
+`dev/` contains a Docker based Craft installation with the plugin, demo content and a demo search page (autocomplete, AJAX results, sentence/word snippets). It needs Docker only.
 
 ```bash
 cd dev

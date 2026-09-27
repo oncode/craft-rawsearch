@@ -3,7 +3,7 @@
  # Works without JavaScript too (plain form submit).
  #}
 {% set query = craft.app.request.getParam('query') %}
-{% set snippets = craft.app.request.getParam('snippets') == 'sentences' ? 'sentences' : 'words' %}
+{% set snippets = craft.app.request.getParam('snippets') == 'words' ? 'words' : 'sentences' %}
 <!doctype html>
 <html lang="{{ currentSite.language }}">
 <head>
@@ -48,8 +48,8 @@
         {# rawsearch extract.type, to compare both snippet modes #}
         <fieldset class="snippet-type">
             <legend>Snippets:</legend>
-            <label><input type="radio" name="snippets" value="words" {{ snippets == 'words' ? 'checked' }}> Words around the match</label>
             <label><input type="radio" name="snippets" value="sentences" {{ snippets == 'sentences' ? 'checked' }}> Whole sentences</label>
+            <label><input type="radio" name="snippets" value="words" {{ snippets == 'words' ? 'checked' }}> Words around the match</label>
         </fieldset>
     </form>
 
@@ -263,8 +263,8 @@
         window.addEventListener('popstate', (e) => {
             const params = new URL(location.href).searchParams;
             input.value = e.state?.query ?? params.get('query') ?? '';
-            const type = e.state?.snippets ?? params.get('snippets') ?? 'words';
-            form.querySelector(`input[name="snippets"][value="${type === 'sentences' ? 'sentences' : 'words'}"]`).checked = true;
+            const type = e.state?.snippets ?? params.get('snippets') ?? 'sentences';
+            form.querySelector(`input[name="snippets"][value="${type === 'words' ? 'words' : 'sentences'}"]`).checked = true;
             if (input.value) search(e.state?.page ?? 1, false);
         });
     })();

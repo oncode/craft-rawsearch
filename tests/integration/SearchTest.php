@@ -178,7 +178,8 @@ class SearchTest extends TestCase
         $this->assertSame('quokka-habitat-protection', $result['slug']);
         $this->assertStringEndsWith('/rawsearch-test/quokka-habitat-protection', $result['url']);
         $this->assertSame(1, $result['wordsFound']);
-        $this->assertSame('<mark>Rottnest</mark> Island is home to', $result['extracts'][0]['text']);
+        // sentence snippets by default
+        $this->assertSame('<mark>Rottnest</mark> Island is home to the quokka.', $result['extracts'][0]['text']);
         $this->assertTrue($result['extracts'][0]['isAtStart']);
         $this->assertIsInt($result['score']);
 
@@ -190,7 +191,7 @@ class SearchTest extends TestCase
 
     public function testSnippetsAreEscaped(): void
     {
-        $text = implode(' ', array_column($this->search('alert', ['extract' => ['radius' => 10]])['results'][0]['extracts'], 'text'));
+        $text = implode(' ', array_column($this->search('alert', ['extract' => ['type' => 'words', 'radius' => 10]])['results'][0]['extracts'], 'text'));
 
         $this->assertStringContainsString('works &amp; it pays off', $text);
         $this->assertStringContainsString('&lt;script&gt;<mark>alert</mark>(1)&lt;/script&gt;', $text);
@@ -198,7 +199,7 @@ class SearchTest extends TestCase
 
     public function testExtractOptions(): void
     {
-        $result = $this->search('quokka', ['extract' => ['radius' => 1, 'limit' => 1, 'wrap' => '<b>{phrase}</b>']])['results'];
+        $result = $this->search('quokka', ['extract' => ['type' => 'words', 'radius' => 1, 'limit' => 1, 'wrap' => '<b>{phrase}</b>']])['results'];
         $quokka = array_values(array_filter($result, fn($r) => $r['title'] === 'Quokka habitat protection'))[0];
 
         $this->assertCount(1, $quokka['extracts']);
@@ -224,11 +225,13 @@ class SearchTest extends TestCase
         $this->assertFalse($results[0]['extracts'][0]['isAtEnd']);
     }
 
-    public function testInvalidExtractTypeUsesWords(): void
+    public function testInvalidExtractTypeUsesSentences(): void
     {
-        $words = $this->search('rottnest')['results'][0]['extracts'];
+        $sentences = $this->search('rottnest', ['extract' => ['type' => 'sentences']])['results'][0]['extracts'];
 
-        $this->assertSame($words, $this->search('rottnest', ['extract' => ['type' => 'nope']])['results'][0]['extracts']);
+        $this->assertSame($sentences, $this->search('rottnest')['results'][0]['extracts']);
+        $this->assertSame($sentences, $this->search('rottnest', ['extract' => ['type' => 'nope']])['results'][0]['extracts']);
+        $this->assertNotSame($sentences, $this->search('rottnest', ['extract' => ['type' => 'words']])['results'][0]['extracts']);
     }
 
     public function testExtractCanBeDisabled(): void
@@ -503,8 +506,13 @@ class SearchTest extends TestCase
 
         $this->assertStringContainsString('3 results found for &quot;quokka&quot;', $html);
         $this->assertStringContainsString('<a href="' . $search['results'][0]['url'] . '" class="title">', $html);
-        // "…" is attached where the text was cut, extracts are separated by " … "
-        $this->assertStringContainsString('<p>How rangers protect the <mark>quokka</mark> habitat. … is home to the <mark>quokka</mark>.', $html);
+        // whole sentences separated by " … "
+        $this->assertStringContainsString('<p>How rangers protect the <mark>quokka</mark> habitat. … Rottnest Island is home to the <mark>quokka</mark>. …', $html);
+
+        // word snippets: "…" is attached where the text was cut
+        $words = $this->search('quokka', ['resultsPerPage' => 2, 'extract' => ['type' => 'words']]);
+        $wordsHtml = preg_replace('/\s+/', ' ', $this->plugin()->search->renderResults($words, 'quokka'));
+        $this->assertStringContainsString('<p>How rangers protect the <mark>quokka</mark> habitat. … is home to the <mark>quokka</mark>.', $wordsHtml);
         $this->assertStringNotContainsString('<p> ', $html);
         $this->assertMatchesRegularExpression('/<a class="nav" data-page="2" href="[^"]+">/', $html);
 
