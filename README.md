@@ -2,6 +2,10 @@
 
 A highly customizable text search for Craft CMS 5 with weighted results and result snippets.
 
+![Typing "env" shows autocomplete suggestions with the number of results, Enter shows the results with highlighted sentence snippets](docs/demo.gif)
+
+> The demo search page of the [development environment](#development-and-tests): autocomplete, AJAX results and sentence snippets.
+
 ## Features
 
 * Own search index, configurable in the control panel:

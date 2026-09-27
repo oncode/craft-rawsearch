@@ -11,6 +11,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Search</title>
     <style>
+        /* keeps the layout from jumping when results make the page scroll */
+        html { scrollbar-gutter: stable; }
         body { font-family: system-ui, sans-serif; max-width: 640px; margin: 60px auto; padding: 0 16px; color: #1f2933; }
         .search-form { display: flex; flex-wrap: wrap; gap: 8px; position: relative; }
         .snippet-type { flex-basis: 100%; display: flex; gap: 16px; margin: 4px 0 0; padding: 0; border: 0; color: #52606d; font-size: 14px; }
