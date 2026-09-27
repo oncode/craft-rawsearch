@@ -1,0 +1,30 @@
+# Development environment: Craft CMS with RawSearch installed from the parent directory.
+# Set up with ./setup.sh, see README "Development and tests".
+name: rawsearch-dev
+
+services:
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: craft
+      MYSQL_USER: craft
+      MYSQL_PASSWORD: craft
+    volumes:
+      - db:/var/lib/mysql
+
+  php:
+    build: .
+    image: rawsearch-dev-php
+    working_dir: /app/site
+    volumes:
+      # dev/ with the Craft project in dev/site
+      - ./:/app
+      # the plugin, installed via a Composer path repository
+      - ../:/plugins/rawsearch
+    command: php -S 0.0.0.0:8080 -t /app/site/web /app/site/web/router.php
+    ports: ["${RAWSEARCH_PORT:-8088}:8080"]
+    depends_on: [db]
+
+volumes:
+  db:

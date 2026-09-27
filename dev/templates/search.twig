@@ -1,0 +1,273 @@
+{#
+ # RawSearch demo: server rendered search with AJAX autocomplete and AJAX results.
+ # Works without JavaScript too (plain form submit).
+ #}
+{% set query = craft.app.request.getParam('query') %}
+{% set snippets = craft.app.request.getParam('snippets') == 'sentences' ? 'sentences' : 'words' %}
+<!doctype html>
+<html lang="{{ currentSite.language }}">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Search</title>
+    <style>
+        body { font-family: system-ui, sans-serif; max-width: 640px; margin: 60px auto; padding: 0 16px; color: #1f2933; }
+        .search-form { display: flex; flex-wrap: wrap; gap: 8px; position: relative; }
+        .snippet-type { flex-basis: 100%; display: flex; gap: 16px; margin: 4px 0 0; padding: 0; border: 0; color: #52606d; font-size: 14px; }
+        .snippet-type legend { float: left; margin-right: 4px; padding: 0; }
+        .snippet-type label { cursor: pointer; }
+        .search-field { position: relative; flex: 1; }
+        .search-input { width: 100%; box-sizing: border-box; font: inherit; font-size: 18px; padding: 10px 12px; border: 1px solid #cbd2d9; border-radius: 6px; }
+        .search-input:focus { outline: 2px solid #3e7bfa; outline-offset: -1px; }
+        .search-form button { font: inherit; padding: 0 18px; border: 0; border-radius: 6px; background: #3e7bfa; color: #fff; cursor: pointer; }
+        .suggestions { position: absolute; left: 0; right: 0; top: 100%; margin: 4px 0 0; padding: 4px 0; list-style: none; background: #fff; border: 1px solid #cbd2d9; border-radius: 6px; box-shadow: 0 6px 20px rgba(0,0,0,.08); z-index: 10; }
+        .suggestions[hidden] { display: none; }
+        .suggestion { padding: 6px 12px; cursor: pointer; display: flex; justify-content: space-between; gap: 12px; }
+        .suggestion[aria-selected="true"], .suggestion:hover { background: #eef3ff; }
+        .suggestion small { color: #7b8794; }
+        .search-results { margin-top: 24px; transition: opacity .15s; }
+        .search-results.loading { opacity: .4; }
+        .result { padding: 14px 0; border-bottom: 1px solid #e4e7eb; }
+        .result .title { font-size: 18px; font-weight: 600; color: #1a56db; text-decoration: none; }
+        .result p { margin: 6px 0 0; color: #52606d; }
+        mark { background: #fff3b0; padding: 0 1px; }
+        .nav { margin-right: 12px; }
+    </style>
+</head>
+<body>
+    <h1>Search</h1>
+
+    <form class="search-form" action="{{ url('search') }}" role="search">
+        <div class="search-field">
+            <input type="search" name="query" class="search-input" value="{{ query }}" autocomplete="off" autofocus
+                   aria-label="Search" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="suggestions">
+            <ul id="suggestions" class="suggestions" role="listbox" hidden></ul>
+        </div>
+        <button type="submit">Search</button>
+
+        {# rawsearch extract.type, to compare both snippet modes #}
+        <fieldset class="snippet-type">
+            <legend>Snippets:</legend>
+            <label><input type="radio" name="snippets" value="words" {{ snippets == 'words' ? 'checked' }}> Words around the match</label>
+            <label><input type="radio" name="snippets" value="sentences" {{ snippets == 'sentences' ? 'checked' }}> Whole sentences</label>
+        </fieldset>
+    </form>
+
+    <div class="search-results" aria-live="polite">
+        {# server rendered results for requests without JavaScript #}
+        {% if query %}
+            {# same template as the AJAX results (html=1) #}
+            {% set search = craft.rawSearch.search({
+                query: query,
+                resultsPerPage: 5,
+                page: craft.app.request.getParam('page'),
+                extract: { type: snippets },
+            }) %}
+            {{ craft.rawSearch.renderResults(search, query) }}
+        {% endif %}
+    </div>
+
+    <script>
+    (() => {
+        const autocompleteUrl = {{ actionUrl('rawsearch/api/autocomplete')|json_encode|raw }};
+        const searchUrl = {{ actionUrl('rawsearch/api/search')|json_encode|raw }};
+        const site = {{ currentSite.handle|json_encode|raw }};
+        const minLength = 2;
+
+        const form = document.querySelector('.search-form');
+        const input = form.querySelector('.search-input');
+        const list = document.getElementById('suggestions');
+        const results = document.querySelector('.search-results');
+        const snippetType = () => form.querySelector('input[name="snippets"]:checked').value;
+
+        let suggestions = [];
+        let selected = -1;
+        let autocompleteRequest = null;
+        let searchRequest = null;
+        let debounce = null;
+
+        const escapeHtml = (str) => str.replace(/[&<>"']/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+        const escapeRegex = (str) => str.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+
+        const getJson = async (url, params, controller) => {
+            const target = new URL(url, location.href);
+            Object.entries(params).forEach(([key, value]) => target.searchParams.set(key, value));
+            const response = await fetch(target, { headers: { Accept: 'application/json' }, signal: controller.signal });
+            return response.json();
+        };
+
+        function closeSuggestions() {
+            suggestions = [];
+            selected = -1;
+            list.hidden = true;
+            list.innerHTML = '';
+            input.setAttribute('aria-expanded', 'false');
+            input.removeAttribute('aria-activedescendant');
+        }
+
+        function renderSuggestions(term) {
+            if (!suggestions.length) {
+                closeSuggestions();
+                return;
+            }
+
+            // highlight the typed part, works with diacritics because the words start with it (case-insensitive)
+            const re = new RegExp('^(' + escapeRegex(term) + ')', 'i');
+
+            list.innerHTML = suggestions.map((item, i) => {
+                // `results` is what a search for the word finds, `elements` only the ones containing this exact word
+                const count = item.results;
+                return `<li id="suggestion-${i}" class="suggestion" role="option" aria-selected="${i === selected}" data-index="${i}">
+                    <span>${escapeHtml(item.word).replace(re, '<b>$1</b>')}</span>
+                    <small>${count} ${count === 1 ? 'result' : 'results'}</small>
+                </li>`;
+            }).join('');
+
+            list.hidden = false;
+            input.setAttribute('aria-expanded', 'true');
+
+            if (selected >= 0) {
+                input.setAttribute('aria-activedescendant', 'suggestion-' + selected);
+            } else {
+                input.removeAttribute('aria-activedescendant');
+            }
+        }
+
+        async function loadSuggestions() {
+            const term = input.value.trim();
+            autocompleteRequest?.abort();
+
+            if (term.length < minLength) {
+                closeSuggestions();
+                return;
+            }
+
+            autocompleteRequest = new AbortController();
+
+            try {
+                const json = await getJson(autocompleteUrl, { query: term, site, limit: 8 }, autocompleteRequest);
+
+                // ignore late answers for an outdated input
+                if (input.value.trim() !== term) {
+                    return;
+                }
+
+                suggestions = json.error ? [] : json.result;
+                selected = -1;
+                renderSuggestions(term);
+            } catch (e) {
+                if (e.name !== 'AbortError') {
+                    closeSuggestions();
+                }
+            }
+        }
+
+        function choose(index) {
+            input.value = suggestions[index].word;
+            closeSuggestions();
+            search(1);
+        }
+
+        async function search(page = 1, pushState = true) {
+            const query = input.value.trim();
+            autocompleteRequest?.abort();
+            searchRequest?.abort();
+            closeSuggestions();
+
+            if (query.length < minLength) {
+                results.innerHTML = '<p>Please enter at least ' + minLength + ' characters.</p>';
+                return;
+            }
+
+            searchRequest = new AbortController();
+            results.classList.add('loading');
+
+            try {
+                const json = await getJson(searchUrl, { query, site, html: 1, page, resultsPerPage: 5, 'extract[type]': snippetType() }, searchRequest);
+                results.innerHTML = json.error ? '<p>' + escapeHtml(json.message) + '</p>' : json.result;
+
+                if (pushState) {
+                    const url = new URL(form.action, location.href);
+                    url.searchParams.set('query', query);
+                    url.searchParams.set('snippets', snippetType());
+                    if (page > 1) url.searchParams.set('page', page);
+                    history.pushState({ query, page, snippets: snippetType() }, '', url);
+                }
+            } catch (e) {
+                if (e.name !== 'AbortError') {
+                    results.innerHTML = '<p>The search failed, please try again.</p>';
+                }
+            } finally {
+                results.classList.remove('loading');
+            }
+        }
+
+        input.addEventListener('input', () => {
+            clearTimeout(debounce);
+            debounce = setTimeout(loadSuggestions, 150);
+        });
+
+        input.addEventListener('keydown', (e) => {
+            if (list.hidden) {
+                return;
+            }
+
+            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                e.preventDefault();
+                const step = e.key === 'ArrowDown' ? 1 : -1;
+                // cycle through "nothing selected" (-1) and the suggestions
+                const states = suggestions.length + 1;
+                selected = ((selected + 1 + step + states) % states) - 1;
+                renderSuggestions(input.value.trim());
+            } else if (e.key === 'Enter' && selected >= 0) {
+                e.preventDefault();
+                choose(selected);
+            } else if (e.key === 'Escape') {
+                closeSuggestions();
+            }
+        });
+
+        // mousedown fires before the input loses focus
+        list.addEventListener('mousedown', (e) => {
+            const item = e.target.closest('.suggestion');
+            if (item) {
+                e.preventDefault();
+                choose(Number(item.dataset.index));
+            }
+        });
+
+        input.addEventListener('blur', () => setTimeout(closeSuggestions, 100));
+
+        form.addEventListener('submit', (e) => {
+            e.preventDefault();
+            search(1);
+        });
+
+        // pagination links of the results template carry the page in data-page
+        results.addEventListener('click', (e) => {
+            const link = e.target.closest('.nav[data-page]');
+            if (link) {
+                e.preventDefault();
+                search(Number(link.dataset.page));
+                results.scrollIntoView({ behavior: 'smooth' });
+            }
+        });
+
+        // switching the snippet type shows the current results with the other snippets
+        form.querySelectorAll('input[name="snippets"]').forEach((radio) => {
+            radio.addEventListener('change', () => {
+                if (input.value.trim().length >= minLength) search(1);
+            });
+        });
+
+        window.addEventListener('popstate', (e) => {
+            const params = new URL(location.href).searchParams;
+            input.value = e.state?.query ?? params.get('query') ?? '';
+            const type = e.state?.snippets ?? params.get('snippets') ?? 'words';
+            form.querySelector(`input[name="snippets"][value="${type === 'sentences' ? 'sentences' : 'words'}"]`).checked = true;
+            if (input.value) search(e.state?.page ?? 1, false);
+        });
+    })();
+    </script>
+</body>
+</html>

@@ -307,12 +307,23 @@ class IndexTest extends TestCase
 
     public function testSavingEntryTypeQueuesReindex(): void
     {
-        Craft::$app->getEntries()->saveEntryType(self::$fixture->pageType);
-        $this->plugin()->index->pushQueuedElements();
+        // Craft only fires the event when something changed
+        $entryType = self::$fixture->pageType;
+        $name = $entryType->name;
+        $entryType->name = $name . ' (changed)';
 
-        $jobs = (new Query())->select(['description'])->from('{{%queue}}')->column();
-        Craft::$app->getQueue()->run();
+        try {
+            Craft::$app->getEntries()->saveEntryType($entryType);
+            $this->plugin()->index->pushQueuedElements();
 
-        $this->assertNotEmpty(array_filter($jobs, fn($description) => str_contains((string)$description, 'Updating search index')));
+            $jobs = (new Query())->select(['description'])->from('{{%queue}}')->column();
+            Craft::$app->getQueue()->run();
+
+            $this->assertNotEmpty(array_filter($jobs, fn($description) => str_contains((string)$description, 'Updating search index')));
+        } finally {
+            $entryType->name = $name;
+            Craft::$app->getEntries()->saveEntryType($entryType);
+            Craft::$app->getQueue()->run();
+        }
     }
 }

@@ -364,9 +364,24 @@ To leave out evergreen content, e.g. the "pages" section, add `dateEntries.secti
   * Indexing
   * Weight
 
-## Tests
+## Development and tests
 
-The tests run against a Craft installation that has the plugin installed (they create their own site, fields, section and entries with unusual words, so existing content doesn't interfere):
+`dev/` contains a Docker based Craft installation with the plugin, demo content and a demo search page (autocomplete, AJAX results, word/sentence snippets). It needs Docker only.
+
+```bash
+cd dev
+./setup.sh      # creates the Craft project in dev/site (about 1–2 minutes)
+./test.sh       # runs all tests, e.g. ./test.sh --filter SearchTest
+```
+
+* Demo: http://localhost:8088/search (another port: `RAWSEARCH_PORT=8090 ./setup.sh`)
+* Control panel: http://localhost:8088/admin (admin / password123)
+* Start and stop: `docker compose up -d` / `docker compose stop` in `dev/`
+* Set up from scratch: `docker compose down -v && rm -rf site && ./setup.sh`
+
+The plugin is linked into the project, changes apply immediately. The demo templates are in `dev/templates`, the demo content is created by `dev/seed.php`.
+
+The tests create their own site, fields, section and entries with unusual words, so they can also run against another Craft installation that has the plugin installed:
 
 ```bash
 cd /path/to/craft

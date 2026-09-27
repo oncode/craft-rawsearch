@@ -1,0 +1,18 @@
+{# template of the demo "Pages" section #}
+<!doctype html>
+<html lang="{{ currentSite.language }}">
+<head>
+    <meta charset="utf-8">
+    <title>{{ entry.title }}</title>
+    <style>body { font-family: system-ui, sans-serif; max-width: 640px; margin: 60px auto; padding: 0 16px; line-height: 1.5; }</style>
+</head>
+<body>
+    <p><a href="{{ url('search') }}">← Search</a></p>
+    <h1>{{ entry.title }}</h1>
+    {% if entry.intro %}<p><strong>{{ entry.intro }}</strong></p>{% endif %}
+    {{ entry.body|nl2br }}
+    {% for block in entry.contentBlocks.all() %}
+        <blockquote>{{ block.blockText|nl2br }}</blockquote>
+    {% endfor %}
+</body>
+</html>
