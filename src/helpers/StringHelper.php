@@ -2,7 +2,7 @@
 
 namespace oncode\rawsearch\helpers;
 
-use craft\helpers\StringHelper as CraftStringHelper;
+use CraftCms\Cms\Support\Str;
 
 /**
  * String normalization used for both indexing and searching.
@@ -83,13 +83,21 @@ class StringHelper
         if (self::$asciiMap === null) {
             // drop mappings that would add whitespace, the extractor needs stable word boundaries
             self::$asciiMap = array_filter(
-                CraftStringHelper::asciiCharMap(true),
+                Str::asciiCharMap(true, null),
                 fn($v, $k) => !preg_match('/\s/u', $v . $k),
                 ARRAY_FILTER_USE_BOTH
             );
         }
 
         return strtr($str, self::$asciiMap);
+    }
+
+    /**
+     * Encodes special characters for html output.
+     */
+    public static function encodeHtml(string $str): string
+    {
+        return htmlspecialchars($str, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
     }
 
     /**

@@ -2,49 +2,41 @@
 
 namespace oncode\rawsearch\services;
 
-use Craft;
-use craft\base\Component;
-use craft\base\ElementInterface;
-use craft\db\Query;
-use craft\elements\db\ElementQueryInterface;
-use craft\models\Site;
-use craft\web\twig\variables\Paginate;
-use craft\web\View;
+use Closure;
+use CraftCms\Cms\Cms;
+use CraftCms\Cms\Element\Contracts\ElementInterface;
+use CraftCms\Cms\Element\Queries\Contracts\ElementQueryInterface;
+use CraftCms\Cms\Site\Data\Site;
+use CraftCms\Cms\Support\Facades\Sites;
+use CraftCms\Cms\Twig\Variables\Paginate;
+use CraftCms\Cms\View\TemplateMode;
+use CraftCms\Cms\View\TemplateResolver;
+use Illuminate\Database\Query\Builder;
+use Illuminate\Pagination\Paginator;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Log;
+use InvalidArgumentException;
 use oncode\rawsearch\db\Table;
-use oncode\rawsearch\events\DbQueryEvent;
-use oncode\rawsearch\events\ElementQueryEvent;
-use oncode\rawsearch\events\RowsEvent;
-use oncode\rawsearch\events\SearchEvent;
+use oncode\rawsearch\events\ElementQueryResolving;
+use oncode\rawsearch\events\ResultRowsResolving;
+use oncode\rawsearch\events\ResultsResolving;
+use oncode\rawsearch\events\Searched;
+use oncode\rawsearch\events\Searching;
+use oncode\rawsearch\events\SearchQueryResolving;
 use oncode\rawsearch\helpers\IndexHelper;
 use oncode\rawsearch\helpers\SentenceExtractor;
 use oncode\rawsearch\helpers\StringHelper;
 use oncode\rawsearch\helpers\WordRadiusExtractor;
 use oncode\rawsearch\RawSearch;
-use yii\base\InvalidArgumentException;
+
+use function CraftCms\Cms\template;
 
 /**
  * Searches the index and returns weighted results with snippets.
  */
-class Search extends Component
+class Search
 {
-    /** Fired before the index gets searched. The `dbQuery` can still be modified. */
-    public const EVENT_BEFORE_SEARCH = 'beforeSearch';
-
-    /** Fired after the search, with the results. */
-    public const EVENT_AFTER_SEARCH = 'afterSearch';
-
-    /** Allows modifying the db query that searches the index table. */
-    public const EVENT_MODIFY_SEARCH_QUERY = 'modifySearchQuery';
-
-    /** Allows modifying the element query used to filter and fetch found elements (per element type). */
-    public const EVENT_MODIFY_ELEMENT_QUERY = 'modifyElementQuery';
-
-    /** Allows modifying the grouped result rows after they got sorted (before pagination). */
-    public const EVENT_MODIFY_RESULT_ROWS = 'modifyResultRows';
-
-    /** Allows modifying the results of the current page. */
-    public const EVENT_MODIFY_RESULTS = 'modifyResults';
-
     public const EXTRACT_SENTENCES = 'sentences';
     public const EXTRACT_WORDS = 'words';
 
@@ -114,13 +106,8 @@ class Search extends Component
 
         $dbQuery = $this->buildSearchQuery($normalizedQuery, $config);
 
-        if ($this->hasEventHandlers(self::EVENT_BEFORE_SEARCH)) {
-            $this->trigger(self::EVENT_BEFORE_SEARCH, new SearchEvent([
-                'query' => $query,
-                'normalizedQuery' => $normalizedQuery,
-                'config' => $config,
-                'dbQuery' => $dbQuery,
-            ]));
+        if (Event::hasListeners(Searching::class)) {
+            event(new Searching(query: $query, normalizedQuery: $normalizedQuery, config: $config, dbQuery: $dbQuery));
         }
 
         [$elementRows, $elementQueries] = $this->fetchElementRows($dbQuery, $normalizedQuery, $config);
@@ -129,9 +116,8 @@ class Search extends Component
             RawSearch::getInstance()->sort->weightedSort($elementRows, $normalizedQuery);
         }
 
-        if ($this->hasEventHandlers(self::EVENT_MODIFY_RESULT_ROWS)) {
-            $event = new RowsEvent(['rows' => $elementRows, 'normalizedQuery' => $normalizedQuery, 'config' => $config]);
-            $this->trigger(self::EVENT_MODIFY_RESULT_ROWS, $event);
+        if (Event::hasListeners(ResultRowsResolving::class)) {
+            event($event = new ResultRowsResolving($elementRows, $normalizedQuery, $config));
             $elementRows = array_values($event->rows);
         }
 
@@ -151,27 +137,26 @@ class Search extends Component
             }
         }
 
-        if ($this->hasEventHandlers(self::EVENT_MODIFY_RESULTS)) {
-            $event = new RowsEvent(['rows' => $results, 'normalizedQuery' => $normalizedQuery, 'config' => $config]);
-            $this->trigger(self::EVENT_MODIFY_RESULTS, $event);
+        if (Event::hasListeners(ResultsResolving::class)) {
+            event($event = new ResultsResolving($results, $normalizedQuery, $config));
             $results = $event->rows;
         }
 
-        Craft::info(sprintf('Search for "%s" took %.4fs', $query, microtime(true) - $startTime), 'rawsearch');
+        Log::debug(sprintf('RawSearch: search for "%s" took %.4fs', $query, microtime(true) - $startTime));
 
         if ($config['statistic'] && $pagination->currentPage === 1) {
             RawSearch::getInstance()->queries->saveQuery($query, $siteId, $total, (bool)$config['or'], (int)$config['mode']);
         }
 
-        if ($this->hasEventHandlers(self::EVENT_AFTER_SEARCH)) {
-            $this->trigger(self::EVENT_AFTER_SEARCH, new SearchEvent([
-                'query' => $query,
-                'normalizedQuery' => $normalizedQuery,
-                'config' => $config,
-                'results' => $results,
-                'pagination' => $pagination,
-                'total' => $total,
-            ]));
+        if (Event::hasListeners(Searched::class)) {
+            event(new Searched(
+                query: $query,
+                normalizedQuery: $normalizedQuery,
+                config: $config,
+                results: $results,
+                pagination: $pagination,
+                total: $total,
+            ));
         }
 
         return [
@@ -189,14 +174,13 @@ class Search extends Component
      */
     public function renderResults(array $search, string $query): string
     {
-        $view = Craft::$app->getView();
         $variables = ['search' => $search, 'query' => $query];
 
-        if ($view->doesTemplateExist('rawsearch/_search', View::TEMPLATE_MODE_SITE)) {
-            return $view->renderTemplate('rawsearch/_search', $variables, View::TEMPLATE_MODE_SITE);
+        if (app(TemplateResolver::class)->exists('rawsearch/_search', TemplateMode::Site)) {
+            return template('rawsearch/_search', $variables, TemplateMode::Site);
         }
 
-        return $view->renderTemplate('rawsearch/_frontend/search', $variables, View::TEMPLATE_MODE_CP);
+        return template('rawsearch/_frontend/search', $variables, TemplateMode::Cp);
     }
 
     /**
@@ -222,7 +206,7 @@ class Search extends Component
      *
      * @return array{0: array, 1: array<string,ElementQueryInterface>} Element rows and the element queries by type
      */
-    protected function fetchElementRows(Query $dbQuery, string $normalizedQuery, array $config): array
+    protected function fetchElementRows(Builder $dbQuery, string $normalizedQuery, array $config): array
     {
         $elementRows = $this->getRowsGroupedByElements($dbQuery);
 
@@ -278,14 +262,12 @@ class Search extends Component
 
     public function resolveSite(mixed $site): Site
     {
-        $sites = Craft::$app->getSites();
-
         if ($site instanceof Site) {
             return $site;
         }
 
         if ($site !== null && $site !== '') {
-            $resolved = is_numeric($site) ? $sites->getSiteById((int)$site) : $sites->getSiteByHandle((string)$site);
+            $resolved = is_numeric($site) ? Sites::getSiteById((int)$site) : Sites::getSiteByHandle((string)$site);
 
             if (!$resolved) {
                 throw new InvalidArgumentException("Invalid site: $site");
@@ -294,7 +276,7 @@ class Search extends Component
             return $resolved;
         }
 
-        return $sites->getCurrentSite();
+        return Sites::getCurrentSite();
     }
 
     /**
@@ -329,9 +311,9 @@ class Search extends Component
      * Builds the db query that searches the index.
      * The index table has the alias `rawsearch`, so other tables can be joined without ambiguous columns.
      */
-    public function buildSearchQuery(string $normalizedQuery, array $config): Query
+    public function buildSearchQuery(string $normalizedQuery, array $config): Builder
     {
-        $dbQuery = (new Query())
+        $dbQuery = DB::table(Table::INDEX, 'rawsearch')
             ->select([
                 'rawsearch.elementId',
                 'rawsearch.siteId',
@@ -341,10 +323,9 @@ class Search extends Component
                 'rawsearch.normalizedWords',
                 'rawsearch.text',
             ])
-            ->from(['rawsearch' => Table::INDEX])
-            ->where(['rawsearch.siteId' => $config['siteId']])
+            ->where('rawsearch.siteId', $config['siteId'])
             // rows are inserted in field layout order, so the snippets follow the order of the content
-            ->orderBy(['rawsearch.id' => SORT_ASC]);
+            ->orderBy('rawsearch.id');
 
         $limit = RawSearch::getInstance()->getSettings()->rowLimitSearch;
 
@@ -353,62 +334,58 @@ class Search extends Component
         }
 
         if ($config['elementTypes']) {
-            $dbQuery->andWhere(['rawsearch.type' => $config['elementTypes']]);
+            $dbQuery->whereIn('rawsearch.type', $config['elementTypes']);
         }
 
         // AND searches fetch rows matching any word, all words have to be found per element (not per row)
-        $dbQuery->andWhere($this->buildWordsCondition(explode(' ', $normalizedQuery), true, $config['mode']));
+        $dbQuery->where($this->buildWordsCondition(explode(' ', $normalizedQuery), true, $config['mode']));
 
-        if ($this->hasEventHandlers(self::EVENT_MODIFY_SEARCH_QUERY)) {
-            $this->trigger(self::EVENT_MODIFY_SEARCH_QUERY, new DbQueryEvent([
-                'dbQuery' => $dbQuery,
-                'normalizedQuery' => $normalizedQuery,
-                'config' => $config,
-            ]));
+        if (Event::hasListeners(SearchQueryResolving::class)) {
+            event(new SearchQueryResolving($dbQuery, $normalizedQuery, $config));
         }
 
         return $dbQuery;
     }
 
     /**
-     * Builds the condition to find the given normalized words.
+     * Builds the condition to find the given normalized words, pass it to `$query->where()`.
      * Words in the fulltext index are searched with MATCH, all others with LIKE.
      * The index table needs the alias `rawsearch`.
+     *
+     * @return Closure(Builder): void
      */
-    public function buildWordsCondition(array $words, bool $or, int $mode): array
+    public function buildWordsCondition(array $words, bool $or, int $mode): Closure
     {
-        $conditions = [];
+        return function(Builder $query) use ($words, $or, $mode) {
+            $boolean = $or ? 'or' : 'and';
 
-        foreach (array_values(array_unique($words)) as $i => $word) {
-            if ($mode !== self::MODE_WORD_CONTENT && IndexHelper::isFulltextWord($word)) {
-                $param = ':rawsearchWord' . $i;
-                $conditions[] = new \yii\db\Expression(
-                    'MATCH([[rawsearch.normalizedWords]]) AGAINST (' . $param . ' IN BOOLEAN MODE)',
-                    [$param => $mode === self::MODE_WORD_START ? $word . '*' : $word]
-                );
-                continue;
+            foreach (array_values(array_unique($words)) as $word) {
+                if ($mode !== self::MODE_WORD_CONTENT && IndexHelper::isFulltextWord($word)) {
+                    $term = $mode === self::MODE_WORD_START ? $word . '*' : $word;
+                    $query->whereFullText('rawsearch.normalizedWords', $term, ['mode' => 'boolean'], $boolean);
+                    continue;
+                }
+
+                $escaped = StringHelper::escapeLike($word);
+                $pattern = match ($mode) {
+                    self::MODE_EXACT => "% $escaped %",
+                    self::MODE_WORD_CONTENT => "%$escaped%",
+                    default => "% $escaped%",
+                };
+                $query->where('rawsearch.normalizedWords', 'like', $pattern, $boolean);
             }
-
-            $escaped = StringHelper::escapeLike($word);
-            $pattern = match ($mode) {
-                self::MODE_EXACT => "% $escaped %",
-                self::MODE_WORD_CONTENT => "%$escaped%",
-                default => "% $escaped%",
-            };
-            $conditions[] = ['like', 'rawsearch.normalizedWords', $pattern, false];
-        }
-
-        return array_merge([$or ? 'or' : 'and'], $conditions);
+        };
     }
 
     /**
      * Returns the found index rows grouped by element.
      */
-    protected function getRowsGroupedByElements(Query $dbQuery): array
+    protected function getRowsGroupedByElements(Builder $dbQuery): array
     {
         $grouped = [];
 
-        foreach ($dbQuery->all() as $row) {
+        foreach ($dbQuery->get() as $row) {
+            $row = (array)$row;
             $elementId = (int)$row['elementId'];
 
             if (!isset($grouped[$elementId])) {
@@ -521,9 +498,8 @@ class Search extends Component
             $query->status($config['status']);
         }
 
-        if ($this->hasEventHandlers(self::EVENT_MODIFY_ELEMENT_QUERY)) {
-            $event = new ElementQueryEvent(['elementType' => $type, 'query' => $query, 'config' => $config]);
-            $this->trigger(self::EVENT_MODIFY_ELEMENT_QUERY, $event);
+        if (Event::hasListeners(ElementQueryResolving::class)) {
+            event($event = new ElementQueryResolving($type, $query, $config));
             $query = $event->query;
         }
 
@@ -645,8 +621,7 @@ class Search extends Component
         $totalPages = max(1, (int)ceil($total / $resultsPerPage));
 
         if ($page === null) {
-            $request = Craft::$app->getRequest();
-            $page = !$request->getIsConsoleRequest() ? $request->getPageNum() : 1;
+            $page = !app()->runningInConsole() ? Paginator::resolveCurrentPage(Cms::config()->getPageTriggerParam()) : 1;
         }
 
         $currentPage = min(max(1, (int)$page), $totalPages);

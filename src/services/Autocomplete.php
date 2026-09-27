@@ -2,35 +2,25 @@
 
 namespace oncode\rawsearch\services;
 
-use Craft;
-use craft\base\Component;
-use craft\db\Query;
+use Illuminate\Database\Query\Builder;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Log;
+use InvalidArgumentException;
 use oncode\rawsearch\db\Table;
-use oncode\rawsearch\events\AutocompleteWordElementEvent;
-use oncode\rawsearch\events\DbQueryEvent;
-use oncode\rawsearch\events\RowsEvent;
-use oncode\rawsearch\events\SearchEvent;
+use oncode\rawsearch\events\Autocompleted;
+use oncode\rawsearch\events\AutocompleteQueryResolving;
+use oncode\rawsearch\events\Autocompleting;
+use oncode\rawsearch\events\TermsResolving;
+use oncode\rawsearch\events\WordElementDataResolving;
 use oncode\rawsearch\helpers\StringHelper;
 use oncode\rawsearch\RawSearch;
-use yii\base\InvalidArgumentException;
 
 /**
  * Completes a word start with the words found in the index.
  */
-class Autocomplete extends Component
+class Autocomplete
 {
-    public const EVENT_BEFORE_AUTOCOMPLETE = 'beforeAutocomplete';
-    public const EVENT_AFTER_AUTOCOMPLETE = 'afterAutocomplete';
-
-    /** Allows modifying the db query, e.g. to join more data for the word element data event. */
-    public const EVENT_MODIFY_AUTOCOMPLETE_QUERY = 'modifyAutocompleteQuery';
-
-    /** Allows modifying the data of an element related to a word. */
-    public const EVENT_MODIFY_WORD_ELEMENT_DATA = 'modifyWordElementData';
-
-    /** Allows modifying (e.g. resorting) the found words. */
-    public const EVENT_MODIFY_TERMS = 'modifyTerms';
-
     public array $defaultConfig = [
         'site' => null,
         'elementTypes' => null,
@@ -70,13 +60,8 @@ class Autocomplete extends Component
 
         $dbQuery = $this->buildSearchQuery($indexQuery, $config);
 
-        if ($this->hasEventHandlers(self::EVENT_BEFORE_AUTOCOMPLETE)) {
-            $this->trigger(self::EVENT_BEFORE_AUTOCOMPLETE, new SearchEvent([
-                'query' => $query,
-                'normalizedQuery' => $normalizedQuery,
-                'config' => $config,
-                'dbQuery' => $dbQuery,
-            ]));
+        if (Event::hasListeners(Autocompleting::class)) {
+            event(new Autocompleting(query: $query, normalizedQuery: $normalizedQuery, config: $config, dbQuery: $dbQuery));
         }
 
         $words = $this->getWordsFromQuery($this->getLiveRows($dbQuery, $config), $normalizedQuery);
@@ -88,40 +73,32 @@ class Autocomplete extends Component
 
         $words = $this->addPhraseResultCounts($words, $config);
 
-        if ($this->hasEventHandlers(self::EVENT_MODIFY_TERMS)) {
-            $event = new RowsEvent(['rows' => $words, 'normalizedQuery' => $normalizedQuery, 'config' => $config]);
-            $this->trigger(self::EVENT_MODIFY_TERMS, $event);
+        if (Event::hasListeners(TermsResolving::class)) {
+            event($event = new TermsResolving($words, $normalizedQuery, $config));
             $words = $event->rows;
         }
 
-        if ($this->hasEventHandlers(self::EVENT_AFTER_AUTOCOMPLETE)) {
-            $this->trigger(self::EVENT_AFTER_AUTOCOMPLETE, new SearchEvent([
-                'query' => $query,
-                'normalizedQuery' => $normalizedQuery,
-                'config' => $config,
-                'dbQuery' => $dbQuery,
-                'words' => $words,
-            ]));
+        if (Event::hasListeners(Autocompleted::class)) {
+            event(new Autocompleted(query: $query, normalizedQuery: $normalizedQuery, config: $config, dbQuery: $dbQuery, words: $words));
         }
 
         return $words;
     }
 
-    public function buildSearchQuery(string $normalizedQuery, array $config): Query
+    public function buildSearchQuery(string $normalizedQuery, array $config): Builder
     {
-        $dbQuery = (new Query())
+        $dbQuery = DB::table(Table::INDEX, 'rawsearch')
             ->select(['rawsearch.elementId', 'rawsearch.type', 'rawsearch.text'])
-            ->from(['rawsearch' => Table::INDEX])
-            ->where(['rawsearch.siteId' => $config['siteId']])
+            ->where('rawsearch.siteId', $config['siteId'])
             // slugs repeat the title in lowercase and would distort the spelling of the words
-            ->andWhere(['not', ['rawsearch.attribute' => 'slug']]);
+            ->where('rawsearch.attribute', '<>', 'slug');
 
         // the query is completed as a whole, so all words have to be there
         $words = explode(' ', $normalizedQuery);
-        $dbQuery->andWhere(RawSearch::getInstance()->search->buildWordsCondition($words, false, Search::MODE_WORD_START));
+        $dbQuery->where(RawSearch::getInstance()->search->buildWordsCondition($words, false, Search::MODE_WORD_START));
 
         if ($config['elementTypes']) {
-            $dbQuery->andWhere(['rawsearch.type' => $config['elementTypes']]);
+            $dbQuery->whereIn('rawsearch.type', $config['elementTypes']);
         }
 
         $limit = RawSearch::getInstance()->getSettings()->rowLimitAutocompleteSearch;
@@ -130,12 +107,8 @@ class Autocomplete extends Component
             $dbQuery->limit($limit);
         }
 
-        if ($this->hasEventHandlers(self::EVENT_MODIFY_AUTOCOMPLETE_QUERY)) {
-            $this->trigger(self::EVENT_MODIFY_AUTOCOMPLETE_QUERY, new DbQueryEvent([
-                'dbQuery' => $dbQuery,
-                'normalizedQuery' => $normalizedQuery,
-                'config' => $config,
-            ]));
+        if (Event::hasListeners(AutocompleteQueryResolving::class)) {
+            event(new AutocompleteQueryResolving($dbQuery, $normalizedQuery, $config));
         }
 
         return $dbQuery;
@@ -206,9 +179,9 @@ class Autocomplete extends Component
     /**
      * Returns the found rows of elements that may be shown, words of e.g. disabled or scheduled entries must not leak.
      */
-    protected function getLiveRows(Query $dbQuery, array $config): array
+    protected function getLiveRows(Builder $dbQuery, array $config): array
     {
-        $rows = $dbQuery->all();
+        $rows = $dbQuery->get()->map(fn($row) => (array)$row)->all();
         $idsByType = [];
 
         foreach ($rows as $row) {
@@ -268,9 +241,8 @@ class Autocomplete extends Component
 
                 $data = ['id' => $elementId, 'type' => $row['type'], 'count' => 1];
 
-                if ($this->hasEventHandlers(self::EVENT_MODIFY_WORD_ELEMENT_DATA)) {
-                    $event = new AutocompleteWordElementEvent(['elementData' => $data, 'row' => $row]);
-                    $this->trigger(self::EVENT_MODIFY_WORD_ELEMENT_DATA, $event);
+                if (Event::hasListeners(WordElementDataResolving::class)) {
+                    event($event = new WordElementDataResolving($data, $row));
                     $data = $event->elementData;
                 }
 
@@ -289,7 +261,7 @@ class Autocomplete extends Component
 
         uksort($words, fn($a, $b) => strnatcasecmp((string)$a, (string)$b));
 
-        Craft::info(sprintf('Autocomplete for "%s" found %d words', $normalizedQuery, count($words)), 'rawsearch');
+        Log::debug(sprintf('RawSearch: autocomplete for "%s" found %d words', $normalizedQuery, count($words)));
 
         return array_values($words);
     }

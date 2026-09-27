@@ -2,38 +2,39 @@
 
 namespace oncode\rawsearch\services;
 
-use Craft;
-use craft\base\Component;
-use craft\db\Query;
-use craft\helpers\StringHelper;
+use CraftCms\Cms\Cms;
+use CraftCms\Cms\Support\Query;
+use Illuminate\Database\Query\Builder;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use oncode\rawsearch\db\Table;
 use oncode\rawsearch\records\Query as QueryRecord;
 
 /**
  * Stores search queries for the statistic.
  */
-class Queries extends Component
+class Queries
 {
     public function saveQuery(string $query, int $siteId, int $results, bool $or, int $mode): bool
     {
         // don't pollute the statistic while developing
-        if (Craft::$app->getConfig()->getGeneral()->devMode) {
+        if (Cms::config()->devMode) {
             return false;
         }
 
         $record = new QueryRecord([
             'siteId' => $siteId,
-            'query' => StringHelper::safeTruncate(mb_strtolower(trim($query)), 255),
+            'query' => mb_substr(mb_strtolower(trim($query)), 0, 255),
             'or' => $or,
             'mode' => $mode,
             'results' => $results,
         ]);
 
         try {
-            return $record->save(false);
+            return $record->save();
         } catch (\Throwable $e) {
             // a failing statistic must never break the search
-            Craft::error('Could not save search query: ' . $e->getMessage(), 'rawsearch');
+            Log::error('RawSearch: could not save search query: ' . $e->getMessage());
             return false;
         }
     }
@@ -41,13 +42,12 @@ class Queries extends Component
     /**
      * Returns a query for the stored search queries.
      */
-    public function find(?int $siteId = null): Query
+    public function find(?int $siteId = null): Builder
     {
-        return (new Query())
+        return DB::table(Table::QUERIES)
             ->select(['id', 'siteId', 'query', 'or', 'mode', 'results', 'dateCreated'])
-            ->from(Table::QUERIES)
-            ->filterWhere(['siteId' => $siteId])
-            ->orderBy(['id' => SORT_DESC]);
+            ->when($siteId, fn($query) => $query->where('siteId', $siteId))
+            ->orderByDesc('id');
     }
 
     /**
@@ -57,30 +57,32 @@ class Queries extends Component
      */
     public function getMostSearched(?int $siteId = null, int $limit = 10, ?\DateTime $since = null): array
     {
-        $query = (new Query())
-            ->select(['query', 'number' => 'COUNT(*)', 'results' => 'MIN([[results]])', 'lastSearched' => 'MAX([[dateCreated]])'])
-            ->from(Table::QUERIES)
-            ->filterWhere(['siteId' => $siteId])
-            ->groupBy(['query'])
-            ->orderBy(['number' => SORT_DESC, 'query' => SORT_ASC])
+        $grammar = DB::getQueryGrammar();
+
+        $query = DB::table(Table::QUERIES)
+            ->select('query')
+            ->selectRaw('COUNT(*) AS ' . $grammar->wrap('number'))
+            ->selectRaw('MIN(' . $grammar->wrap('results') . ') AS ' . $grammar->wrap('results'))
+            ->selectRaw('MAX(' . $grammar->wrap('dateCreated') . ') AS ' . $grammar->wrap('lastSearched'))
+            ->when($siteId, fn($query) => $query->where('siteId', $siteId))
+            ->when($since, fn($query) => $query->where('dateCreated', '>=', Query::prepareDateForDb($since)))
+            ->groupBy('query')
+            ->orderByDesc('number')
+            ->orderBy('query')
             ->limit($limit);
 
-        if ($since) {
-            $query->andWhere(['>=', 'dateCreated', \craft\helpers\Db::prepareDateForDb($since)]);
-        }
-
-        return array_map(fn($row) => [
-            'query' => $row['query'],
-            'number' => (int)$row['number'],
-            'results' => (int)$row['results'],
-            'lastSearched' => $row['lastSearched'],
-        ], $query->all());
+        return $query->get()->map(fn($row) => [
+            'query' => $row->query,
+            'number' => (int)$row->number,
+            'results' => (int)$row->results,
+            'lastSearched' => $row->lastSearched,
+        ])->all();
     }
 
     public function deleteAll(?int $siteId = null): int
     {
-        return Craft::$app->getDb()->createCommand()
-            ->delete(Table::QUERIES, $siteId ? ['siteId' => $siteId] : '')
-            ->execute();
+        return DB::table(Table::QUERIES)
+            ->when($siteId, fn($query) => $query->where('siteId', $siteId))
+            ->delete();
     }
 }

@@ -2,33 +2,38 @@
 
 namespace oncode\rawsearch\jobs;
 
-use Craft;
-use craft\base\Batchable;
-use craft\base\ElementInterface;
-use craft\db\QueryBatcher;
-use craft\helpers\Db;
-use craft\queue\BaseBatchedJob;
+use CraftCms\Cms\Element\Contracts\ElementInterface;
+use CraftCms\Cms\Queue\BatchedJob;
+use CraftCms\Cms\Support\Facades\I18N;
+use CraftCms\Cms\Support\Query;
+use Illuminate\Contracts\Database\Query\Builder;
 use oncode\rawsearch\RawSearch;
 
 /**
  * Reindexes all elements of an element type in batches.
  */
-class IndexElementType extends BaseBatchedJob
+class IndexElementType extends BatchedJob
 {
-    /** @var class-string<ElementInterface> */
-    public string $elementType;
-
     /** When the first batch started, rows indexed before are stale at the end. */
     public ?string $startedAt = null;
 
-    protected function loadData(): Batchable
+    /**
+     * @param class-string<ElementInterface> $elementType
+     */
+    public function __construct(
+        public string $elementType,
+    ) {
+        parent::__construct();
+    }
+
+    protected function getQuery(): Builder
     {
-        return new QueryBatcher(RawSearch::getInstance()->index->createElementTypeQuery($this->elementType));
+        return RawSearch::getInstance()->index->createElementTypeQuery($this->elementType);
     }
 
     protected function before(): void
     {
-        $this->startedAt = Db::prepareDateForDb(new \DateTime());
+        $this->startedAt = Query::prepareDateForDb(new \DateTime());
     }
 
     protected function beforeBatch(): void
@@ -48,10 +53,10 @@ class IndexElementType extends BaseBatchedJob
         }
     }
 
-    protected function defaultDescription(): ?string
+    protected function defaultDescription(): string
     {
         $name = class_exists($this->elementType) ? $this->elementType::pluralDisplayName() : $this->elementType;
 
-        return Craft::t('rawsearch', 'Updating search index of {type}', ['type' => $name]);
+        return I18N::prep('Updating search index of {type}', ['type' => $name], 'rawsearch');
     }
 }

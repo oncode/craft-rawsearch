@@ -2,11 +2,10 @@
 
 namespace oncode\rawsearch\tests\integration;
 
-use oncode\rawsearch\events\AutocompleteWordElementEvent;
-use oncode\rawsearch\events\RowsEvent;
-use oncode\rawsearch\services\Autocomplete;
+use InvalidArgumentException;
+use oncode\rawsearch\events\TermsResolving;
+use oncode\rawsearch\events\WordElementDataResolving;
 use oncode\rawsearch\tests\TestCase;
-use yii\base\InvalidArgumentException;
 
 class AutocompleteTest extends TestCase
 {
@@ -132,10 +131,10 @@ class AutocompleteTest extends TestCase
 
     public function testEvents(): void
     {
-        $this->on(Autocomplete::class, Autocomplete::EVENT_MODIFY_WORD_ELEMENT_DATA, function(AutocompleteWordElementEvent $event) {
+        $this->on(WordElementDataResolving::class, function(WordElementDataResolving $event) {
             $event->elementData['textLength'] = mb_strlen($event->row['text']);
         });
-        $this->on(Autocomplete::class, Autocomplete::EVENT_MODIFY_TERMS, function(RowsEvent $event) {
+        $this->on(TermsResolving::class, function(TermsResolving $event) {
             $event->rows = array_reverse($event->rows);
         });
 

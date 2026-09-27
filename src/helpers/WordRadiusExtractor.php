@@ -2,8 +2,7 @@
 
 namespace oncode\rawsearch\helpers;
 
-use Craft;
-use craft\helpers\Html;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Extracts the found words and their surrounding words out of a text.
@@ -132,7 +131,7 @@ class WordRadiusExtractor
         $this->nrOfWhitespaces = count($this->whitespaces);
 
         if ($this->nrOfWhitespaces !== count($this->normalizedWhitespaceIndexes)) {
-            Craft::warning('Amount of whitespaces differs, no snippets extracted for: ' . $this->text, 'rawsearch');
+            Log::warning('RawSearch: amount of whitespaces differs, no snippets extracted for: ' . $this->text);
             return false;
         }
 
@@ -173,7 +172,7 @@ class WordRadiusExtractor
         // line breaks (paragraphs) are kept in the text for the sentence detection, extracts are one line
         $part = strtr($part, ["\n" => ' ', "\r" => ' ']);
         $this->extractParts[] = $part;
-        $this->extract .= Html::encode($part);
+        $this->extract .= StringHelper::encodeHtml($part);
     }
 
     private function addWord(string $word): void
@@ -189,7 +188,7 @@ class WordRadiusExtractor
      */
     protected function wrapWord(string $word): string
     {
-        $encoded = Html::encode($word);
+        $encoded = StringHelper::encodeHtml($word);
 
         return $this->wrap !== '' ? str_replace('{phrase}', $encoded, $this->wrap) : $encoded;
     }

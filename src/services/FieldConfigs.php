@@ -2,14 +2,13 @@
 
 namespace oncode\rawsearch\services;
 
-use craft\base\Component;
 use oncode\rawsearch\records\FieldConfig;
 use oncode\rawsearch\RawSearch;
 
 /**
  * Which fields get indexed and how much they weigh.
  */
-class FieldConfigs extends Component
+class FieldConfigs
 {
     /** @var array<int,FieldConfig>|null */
     private ?array $configs = null;
@@ -22,7 +21,7 @@ class FieldConfigs extends Component
         if ($this->configs === null) {
             $this->configs = [];
 
-            foreach (FieldConfig::find()->all() as $record) {
+            foreach (FieldConfig::query()->get() as $record) {
                 $this->configs[(int)$record->fieldId] = $record;
             }
         }
@@ -86,7 +85,7 @@ class FieldConfigs extends Component
 
     private function save(int $fieldId, bool $index, ?int $matchWeight, ?int $partialMatchWeight): bool
     {
-        $record = FieldConfig::findOne(['fieldId' => $fieldId]);
+        $record = FieldConfig::query()->where('fieldId', $fieldId)->first();
         $this->configs = null;
 
         // nothing differs from the defaults, no need for a record

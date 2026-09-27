@@ -2,23 +2,28 @@
 
 namespace oncode\rawsearch\jobs;
 
-use Craft;
-use craft\base\ElementInterface;
-use craft\queue\BaseJob;
+use CraftCms\Cms\Element\Contracts\ElementInterface;
+use CraftCms\Cms\Queue\Job;
+use CraftCms\Cms\Support\Facades\I18N;
 use oncode\rawsearch\RawSearch;
 
 /**
  * Reindexes the given elements in all their sites.
  */
-class IndexElements extends BaseJob
+class IndexElements extends Job
 {
-    /** @var class-string<ElementInterface> */
-    public string $elementType;
+    /**
+     * @param class-string<ElementInterface> $elementType
+     * @param int[] $elementIds
+     */
+    public function __construct(
+        public string $elementType,
+        public array $elementIds = [],
+    ) {
+        parent::__construct();
+    }
 
-    /** @var int[] */
-    public array $elementIds = [];
-
-    public function execute($queue): void
+    public function handle(): void
     {
         $index = RawSearch::getInstance()->index;
         $index->morePowerPls();
@@ -35,15 +40,15 @@ class IndexElements extends BaseJob
         $total = count($elements);
 
         foreach ($elements as $i => $element) {
-            $this->setProgress($queue, ($i + 1) / $total);
+            $this->setProgress((int)(($i + 1) / $total * 100));
             $index->indexElement($element);
         }
     }
 
-    protected function defaultDescription(): ?string
+    protected function defaultDescription(): string
     {
-        return Craft::t('rawsearch', 'Updating search index of {count, plural, =1{# element} other{# elements}}', [
+        return I18N::prep('Updating search index of {count, plural, =1{# element} other{# elements}}', [
             'count' => count($this->elementIds),
-        ]);
+        ], 'rawsearch');
     }
 }

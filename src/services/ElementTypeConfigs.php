@@ -2,26 +2,22 @@
 
 namespace oncode\rawsearch\services;
 
-use Craft;
-use craft\base\Component;
-use craft\base\ElementInterface;
+use CraftCms\Cms\Element\Contracts\ElementInterface;
+use CraftCms\Cms\Support\Facades\Elements;
 use oncode\rawsearch\records\ElementTypeConfig;
 use oncode\rawsearch\RawSearch;
 
 /**
  * Which element types get indexed and how much they weigh.
  */
-class ElementTypeConfigs extends Component
+class ElementTypeConfigs
 {
     /** Element types that are not indexed after the installation. Users are excluded to not expose them in a public search. */
     public const DEFAULT_BLACKLISTED = [
-        'craft\elements\User',
-        'craft\elements\GlobalSet',
-        'craft\elements\Tag',
-        'craft\elements\Address',
-        'craft\elements\ContentBlock',
+        'CraftCms\Cms\User\Elements\User',
+        'CraftCms\Cms\Address\Elements\Address',
+        'CraftCms\Cms\Field\Elements\ContentBlock',
         'benf\neo\elements\Block',
-        'verbb\supertable\elements\SuperTableBlockElement',
     ];
 
     /** @var array<string,ElementTypeConfig>|null */
@@ -35,7 +31,7 @@ class ElementTypeConfigs extends Component
         if ($this->configs === null) {
             $this->configs = [];
 
-            foreach (ElementTypeConfig::find()->all() as $record) {
+            foreach (ElementTypeConfig::query()->get() as $record) {
                 $this->configs[$record->type] = $record;
             }
         }
@@ -87,7 +83,7 @@ class ElementTypeConfigs extends Component
     public function getAllElementTypes(): array
     {
         return array_values(array_filter(
-            Craft::$app->getElements()->getAllElementTypes(),
+            Elements::getAllElementTypes(),
             fn($class) => is_subclass_of($class, ElementInterface::class)
         ));
     }
@@ -107,7 +103,7 @@ class ElementTypeConfigs extends Component
             return ltrim($name, '\\');
         }
 
-        $class = Craft::$app->getElements()->getElementTypeByRefHandle(lcfirst($name));
+        $class = Elements::getElementTypeByRefHandle(lcfirst($name));
 
         if ($class) {
             return $class;
@@ -139,7 +135,7 @@ class ElementTypeConfigs extends Component
 
     private function save(string $elementType, bool $index, ?int $matchWeight): bool
     {
-        $record = ElementTypeConfig::findOne(['type' => $elementType]);
+        $record = ElementTypeConfig::query()->where('type', $elementType)->first();
 
         // nothing differs from the defaults, no need for a record
         if ($index && $matchWeight === null) {

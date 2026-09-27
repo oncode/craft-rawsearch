@@ -2,16 +2,26 @@
 
 namespace oncode\rawsearch\controllers;
 
-use Craft;
-use craft\web\Controller;
+use CraftCms\Cms\Cms;
+use CraftCms\Cms\Http\RespondsWithFlash;
+use CraftCms\Cms\Support\Facades\Fields;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Gate;
 use oncode\rawsearch\RawSearch;
-use yii\web\Response;
+use Symfony\Component\HttpFoundation\Response;
+
+use function CraftCms\Cms\cp_redirect;
+use function CraftCms\Cms\pageTemplate;
+use function CraftCms\Cms\t;
 
 /**
  * Control panel pages for the weight and indexing settings.
+ * Permissions, admin and POST requirements are checked by the route middleware.
  */
-class SettingsController extends Controller
+class SettingsController
 {
+    use RespondsWithFlash;
+
     /** Plugin settings that can be changed on the weight/indexing pages. */
     private const WEIGHT_SETTINGS = [
         'titleMatchWeight',
@@ -22,41 +32,27 @@ class SettingsController extends Controller
     ];
     private const INDEX_SETTINGS = ['blacklistedWords'];
 
-    public function beforeAction($action): bool
+    public function index(): Response
     {
-        $this->requirePermission(RawSearch::PERMISSION_EDIT_SETTINGS);
-
-        return parent::beforeAction($action);
-    }
-
-    public function actionIndex(): Response
-    {
-        $user = Craft::$app->getUser();
-
-        if ($user->checkPermission(RawSearch::PERMISSION_EDIT_WEIGHT_SETTINGS)) {
-            return $this->redirect('rawsearch/settings/weight/general');
+        if (Gate::check(RawSearch::PERMISSION_EDIT_WEIGHT_SETTINGS)) {
+            return cp_redirect('rawsearch/settings/weight/general');
         }
 
-        return $this->redirect('rawsearch/settings/indexing/words');
+        return cp_redirect('rawsearch/settings/indexing/words');
     }
 
     // General
     // -------------------------------------------------------------------------
 
-    public function actionGeneral(): Response
+    public function general(): Response
     {
-        $this->requireAdmin(false);
-
         return $this->renderSettingsTemplate('rawsearch/settings/general');
     }
 
-    public function actionSaveGeneral(): ?Response
+    public function saveGeneral(Request $request): Response
     {
-        $this->requirePostRequest();
-        $this->requireAdmin();
-
         $values = array_intersect_key(
-            (array)$this->request->getBodyParam('settings', []),
+            (array)$request->post('settings', []),
             array_flip(['name', 'statistic', 'apiKey'])
         );
 
@@ -70,16 +66,13 @@ class SettingsController extends Controller
     // Weight
     // -------------------------------------------------------------------------
 
-    public function actionWeightGeneral(): Response
+    public function weightGeneral(): Response
     {
-        $this->requirePermission(RawSearch::PERMISSION_EDIT_WEIGHT_SETTINGS);
-
         return $this->renderSettingsTemplate('rawsearch/settings/weight/general');
     }
 
-    public function actionWeightElementTypes(): Response
+    public function weightElementTypes(): Response
     {
-        $this->requirePermission(RawSearch::PERMISSION_EDIT_WEIGHT_SETTINGS);
         $configs = RawSearch::getInstance()->elementTypeConfigs;
 
         return $this->renderSettingsTemplate('rawsearch/settings/weight/element-types', [
@@ -88,24 +81,21 @@ class SettingsController extends Controller
         ]);
     }
 
-    public function actionSaveElementTypeWeights(): ?Response
+    public function saveElementTypeWeights(Request $request): Response
     {
-        $this->requirePostRequest();
-        $this->requirePermission(RawSearch::PERMISSION_EDIT_WEIGHT_SETTINGS);
         $configs = RawSearch::getInstance()->elementTypeConfigs;
 
-        foreach ((array)$this->request->getBodyParam('elementTypes', []) as $type => $weight) {
+        foreach ((array)$request->post('elementTypes', []) as $type => $weight) {
             if ($configs->resolveElementType($type) && $weight !== '') {
                 $configs->saveMatchWeight($type, (int)$weight);
             }
         }
 
-        return $this->asSuccess(Craft::t('rawsearch', 'Settings have been saved.'));
+        return $this->asSuccess(t('Settings have been saved.', category: 'rawsearch'));
     }
 
-    public function actionWeightFields(): Response
+    public function weightFields(): Response
     {
-        $this->requirePermission(RawSearch::PERMISSION_EDIT_WEIGHT_SETTINGS);
         $fieldConfigs = RawSearch::getInstance()->fieldConfigs;
         $fields = array_filter(
             RawSearch::getInstance()->index->getIndexableFields(),
@@ -118,15 +108,13 @@ class SettingsController extends Controller
         ]);
     }
 
-    public function actionSaveFieldWeights(): ?Response
+    public function saveFieldWeights(Request $request): Response
     {
-        $this->requirePostRequest();
-        $this->requirePermission(RawSearch::PERMISSION_EDIT_WEIGHT_SETTINGS);
         $fieldConfigs = RawSearch::getInstance()->fieldConfigs;
         $settings = RawSearch::getInstance()->getSettings();
 
-        foreach ((array)$this->request->getBodyParam('fields', []) as $fieldId => $weights) {
-            if (!Craft::$app->getFields()->getFieldById((int)$fieldId)) {
+        foreach ((array)$request->post('fields', []) as $fieldId => $weights) {
+            if (!Fields::getFieldById((int)$fieldId)) {
                 continue;
             }
 
@@ -137,26 +125,23 @@ class SettingsController extends Controller
             );
         }
 
-        return $this->asSuccess(Craft::t('rawsearch', 'Settings have been saved.'));
+        return $this->asSuccess(t('Settings have been saved.', category: 'rawsearch'));
     }
 
     // Indexing
     // -------------------------------------------------------------------------
 
-    public function actionIndexingWords(): Response
+    public function indexingWords(): Response
     {
-        $this->requirePermission(RawSearch::PERMISSION_EDIT_INDEX_SETTINGS);
-
         return $this->renderSettingsTemplate('rawsearch/settings/indexing/words');
     }
 
-    public function actionIndexingFieldTypes(): Response
+    public function indexingFieldTypes(): Response
     {
-        $this->requirePermission(RawSearch::PERMISSION_EDIT_INDEX_SETTINGS);
         $fieldTypes = array_map(fn($class) => [
             'class' => $class,
             'name' => $class::displayName(),
-        ], Craft::$app->getFields()->getAllFieldTypes());
+        ], Fields::getAllFieldTypes()->all());
         usort($fieldTypes, fn($a, $b) => strnatcasecmp($a['name'], $b['name']));
 
         return $this->renderSettingsTemplate('rawsearch/settings/indexing/field-types', [
@@ -164,13 +149,10 @@ class SettingsController extends Controller
         ]);
     }
 
-    public function actionSaveFieldTypes(): ?Response
+    public function saveFieldTypes(Request $request): Response
     {
-        $this->requirePostRequest();
-        $this->requirePermission(RawSearch::PERMISSION_EDIT_INDEX_SETTINGS);
-
-        $allTypes = Craft::$app->getFields()->getAllFieldTypes();
-        $posted = (array)$this->request->getBodyParam('fieldTypes', []);
+        $allTypes = Fields::getAllFieldTypes()->all();
+        $posted = (array)$request->post('fieldTypes', []);
         $settings = RawSearch::getInstance()->getSettings();
 
         // keep whitelisted types that aren't installed at the moment (e.g. a disabled plugin)
@@ -185,50 +167,42 @@ class SettingsController extends Controller
         return $this->savePluginSettings(['whitelistedFieldTypes' => $whitelisted], true);
     }
 
-    public function actionIndexingFields(): Response
+    public function indexingFields(): Response
     {
-        $this->requirePermission(RawSearch::PERMISSION_EDIT_INDEX_SETTINGS);
-
         return $this->renderSettingsTemplate('rawsearch/settings/indexing/fields', [
             'fields' => RawSearch::getInstance()->index->getIndexableFields(),
             'blacklistedFieldIds' => RawSearch::getInstance()->fieldConfigs->getBlacklistedFieldIds(),
         ]);
     }
 
-    public function actionSaveFieldIndexes(): ?Response
+    public function saveFieldIndexes(Request $request): Response
     {
-        $this->requirePostRequest();
-        $this->requirePermission(RawSearch::PERMISSION_EDIT_INDEX_SETTINGS);
         $fieldConfigs = RawSearch::getInstance()->fieldConfigs;
 
-        foreach ((array)$this->request->getBodyParam('fields', []) as $fieldId => $index) {
-            if (Craft::$app->getFields()->getFieldById((int)$fieldId)) {
+        foreach ((array)$request->post('fields', []) as $fieldId => $index) {
+            if (Fields::getFieldById((int)$fieldId)) {
                 $fieldConfigs->saveIndex((int)$fieldId, (bool)$index);
             }
         }
 
-        return $this->asSuccess(Craft::t('rawsearch', 'Settings have been saved. Update the search index to apply the changes.'));
+        return $this->asSuccess(t('Settings have been saved. Update the search index to apply the changes.', category: 'rawsearch'));
     }
 
-    public function actionIndexingElementTypes(): Response
+    public function indexingElementTypes(): Response
     {
-        $this->requirePermission(RawSearch::PERMISSION_EDIT_INDEX_SETTINGS);
-
         return $this->renderSettingsTemplate('rawsearch/settings/indexing/element-types', [
             'elementTypes' => $this->elementTypeOptions(RawSearch::getInstance()->elementTypeConfigs->getAllElementTypes()),
             'blacklistedElementTypes' => RawSearch::getInstance()->elementTypeConfigs->getBlacklistedElementTypes(),
         ]);
     }
 
-    public function actionSaveElementTypeIndexes(): ?Response
+    public function saveElementTypeIndexes(Request $request): Response
     {
-        $this->requirePostRequest();
-        $this->requirePermission(RawSearch::PERMISSION_EDIT_INDEX_SETTINGS);
         $plugin = RawSearch::getInstance();
         $configs = $plugin->elementTypeConfigs;
         $newlyIndexed = [];
 
-        foreach ((array)$this->request->getBodyParam('elementTypes', []) as $type => $index) {
+        foreach ((array)$request->post('elementTypes', []) as $type => $index) {
             if (!$configs->resolveElementType($type)) {
                 continue;
             }
@@ -247,27 +221,25 @@ class SettingsController extends Controller
             $plugin->index->queueElementType($type);
         }
 
-        return $this->asSuccess(Craft::t('rawsearch', 'Settings have been saved.'));
+        return $this->asSuccess(t('Settings have been saved.', category: 'rawsearch'));
     }
 
     /**
      * Saves the general settings of the weight and indexing pages.
      */
-    public function actionSaveSettings(): ?Response
+    public function saveSettings(Request $request): Response
     {
-        $this->requirePostRequest();
-        $user = Craft::$app->getUser();
         $allowed = [];
 
-        if ($user->checkPermission(RawSearch::PERMISSION_EDIT_WEIGHT_SETTINGS)) {
+        if (Gate::check(RawSearch::PERMISSION_EDIT_WEIGHT_SETTINGS)) {
             $allowed = array_merge($allowed, self::WEIGHT_SETTINGS);
         }
 
-        if ($user->checkPermission(RawSearch::PERMISSION_EDIT_INDEX_SETTINGS)) {
+        if (Gate::check(RawSearch::PERMISSION_EDIT_INDEX_SETTINGS)) {
             $allowed = array_merge($allowed, self::INDEX_SETTINGS);
         }
 
-        $posted = array_intersect_key((array)$this->request->getBodyParam('settings', []), array_flip($allowed));
+        $posted = array_intersect_key((array)$request->post('settings', []), array_flip($allowed));
 
         return $this->savePluginSettings($posted, isset($posted['blacklistedWords']));
     }
@@ -275,18 +247,16 @@ class SettingsController extends Controller
     /**
      * Updates the search index of an element type or of all element types.
      */
-    public function actionReindex(): ?Response
+    public function reindex(Request $request): Response
     {
-        $this->requirePostRequest();
-        $this->requirePermission(RawSearch::PERMISSION_EDIT_INDEX_SETTINGS);
         $index = RawSearch::getInstance()->index;
-        $elementType = $this->request->getBodyParam('elementType');
+        $elementType = $request->post('elementType');
 
         if ($elementType) {
             $class = RawSearch::getInstance()->elementTypeConfigs->resolveElementType($elementType);
 
             if (!$class) {
-                return $this->asFailure(Craft::t('rawsearch', 'Invalid element type.'));
+                return $this->asFailure(t('Invalid element type.', category: 'rawsearch'));
             }
 
             $index->queueElementType($class);
@@ -294,24 +264,24 @@ class SettingsController extends Controller
             $index->queueAll();
         }
 
-        return $this->asSuccess(Craft::t('rawsearch', 'Search index update started.'));
+        return $this->asSuccess(t('Search index update started.', category: 'rawsearch'));
     }
 
-    private function savePluginSettings(array $values, bool $affectsIndex): ?Response
+    private function savePluginSettings(array $values, bool $affectsIndex): Response
     {
-        if (!Craft::$app->getConfig()->getGeneral()->allowAdminChanges) {
-            return $this->asFailure(Craft::t('rawsearch', 'Settings can’t be changed because admin changes are disallowed in this environment.'));
+        if (!Cms::config()->allowAdminChanges) {
+            return $this->asFailure(t('Settings can’t be changed because admin changes are disallowed in this environment.', category: 'rawsearch'));
         }
 
         $plugin = RawSearch::getInstance();
 
         if (!$plugin->saveSettings($values)) {
-            return $this->asFailure(Craft::t('rawsearch', 'Settings could not be saved.'));
+            return $this->asFailure(t('Settings could not be saved.', category: 'rawsearch'));
         }
 
         return $this->asSuccess($affectsIndex
-            ? Craft::t('rawsearch', 'Settings have been saved. Update the search index to apply the changes.')
-            : Craft::t('rawsearch', 'Settings have been saved.'));
+            ? t('Settings have been saved. Update the search index to apply the changes.', category: 'rawsearch')
+            : t('Settings have been saved.', category: 'rawsearch'));
     }
 
     /**
@@ -330,9 +300,9 @@ class SettingsController extends Controller
 
     private function renderSettingsTemplate(string $template, array $variables = []): Response
     {
-        return $this->renderTemplate($template, $variables + [
+        return response(pageTemplate($template, $variables + [
             'settings' => RawSearch::getInstance()->getSettings(),
-            'allowAdminChanges' => Craft::$app->getConfig()->getGeneral()->allowAdminChanges,
-        ]);
+            'allowAdminChanges' => Cms::config()->allowAdminChanges,
+        ]));
     }
 }

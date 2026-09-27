@@ -28,7 +28,7 @@
         <p>{{ 'Page {page} of {pages}'|t('rawsearch', {page: pagination.currentPage, pages: pagination.totalPages}) }}</p>
 
         {# data-page is for AJAX requests, the links for page loads (page URLs need a web request) #}
-        {% set withUrls = not craft.app.request.isConsoleRequest %}
+        {% set withUrls = not app().runningInConsole() %}
         {% if pagination.currentPage > 1 %}
             <a class="nav" data-page="{{ pagination.currentPage - 1 }}" href="{{ withUrls ? pagination.prevUrl : '#' }}">&laquo; {{ 'Previous Page'|t('rawsearch') }}</a>
         {% endif %}

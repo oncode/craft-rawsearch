@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Creates a Craft project in dev/site, installs RawSearch from the parent directory and adds demo content.
+# Creates a Craft 6 project in dev/site, installs RawSearch from the parent directory and adds demo content.
 # Usage: ./setup.sh (port: RAWSEARCH_PORT=8090 ./setup.sh)
 set -euo pipefail
 
@@ -17,30 +17,24 @@ docker compose up -d db
 
 echo "Creating the Craft project ..."
 mkdir site
-run sh -c 'composer create-project craftcms/craft /tmp/craft --no-interaction --quiet && cp -a /tmp/craft/. /app/site/'
+# without scripts, the starter would run the interactive installer before the database is configured
+run sh -c 'composer create-project "craftcms/craft:^6.0.0-alpha" /tmp/craft --stability=alpha --no-scripts --no-interaction --quiet && cp -a /tmp/craft/. /app/site/'
+run sh -c 'cp .env.example .env && php artisan key:generate --ansi && composer run-script post-autoload-dump --quiet'
 
-# the demo templates and the router for PHP's built-in server live in dev/
-rm -rf site/templates
-ln -s ../templates site/templates
-cp router.php site/web/router.php
+# the demo templates live in dev/templates
+rm -rf site/resources/views
+ln -s ../../templates site/resources/views
 
-cat > site/.env <<ENV
-CRAFT_APP_ID=rawsearch-dev
-CRAFT_ENVIRONMENT=dev
-CRAFT_SECURITY_KEY=$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32)
-CRAFT_DB_DRIVER=mysql
-CRAFT_DB_SERVER=db
-CRAFT_DB_PORT=3306
-CRAFT_DB_DATABASE=craft
-CRAFT_DB_USER=craft
-CRAFT_DB_PASSWORD=craft
-CRAFT_DB_SCHEMA=
-CRAFT_DB_TABLE_PREFIX=
-CRAFT_DEV_MODE=true
-CRAFT_ALLOW_ADMIN_CHANGES=true
-CRAFT_DISALLOW_ROBOTS=true
-PRIMARY_SITE_URL=http://localhost:${PORT}
-ENV
+sed -i.bak \
+    -e "s#^APP_URL=.*#APP_URL=http://localhost:${PORT}#" \
+    -e 's/^DB_CONNECTION=.*/DB_CONNECTION=mysql/' \
+    -e 's/^DB_HOST=.*/DB_HOST=db/' \
+    -e 's/^DB_PORT=.*/DB_PORT=3306/' \
+    -e 's/^DB_DATABASE=.*/DB_DATABASE=craft/' \
+    -e 's/^DB_USERNAME=.*/DB_USERNAME=craft/' \
+    -e 's/^DB_PASSWORD=.*/DB_PASSWORD=craft/' \
+    site/.env
+rm site/.env.bak
 
 echo "Waiting for the database ..."
 until docker compose exec -T db mysqladmin ping -ucraft -pcraft --silent >/dev/null 2>&1; do sleep 2; done
@@ -48,17 +42,16 @@ sleep 3
 
 echo "Installing Craft and RawSearch ..."
 run composer config repositories.rawsearch '{"type":"path","url":"/plugins/rawsearch","options":{"symlink":true}}'
-run composer config minimum-stability dev
+run composer config minimum-stability alpha
 run composer config prefer-stable true
 run composer require "oncode/craft-rawsearch:@dev" --no-interaction --quiet
-run composer require --dev "phpunit/phpunit:^11" --no-interaction --quiet
-run php craft install --interactive=0 --username=admin --password=password123 --email=admin@example.com \
-    --site-name="RawSearch Dev" --site-url="http://localhost:${PORT}" --language=en
+run php artisan craft:install -n --username=admin --password=password123 --email=admin@example.com \
+    --siteName="RawSearch Dev" --siteUrl="http://localhost:${PORT}" --language=en
 run php craft plugin/install rawsearch
 
 echo "Adding demo content ..."
 run php /app/seed.php
-run php craft queue/run >/dev/null
+run php artisan queue:work --stop-when-empty --quiet
 
 docker compose up -d php
 

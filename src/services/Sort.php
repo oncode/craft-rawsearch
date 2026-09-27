@@ -2,22 +2,17 @@
 
 namespace oncode\rawsearch\services;
 
-use Craft;
-use craft\base\Component;
-use oncode\rawsearch\events\WeightScoreEvent;
+use CraftCms\Cms\Cms;
+use Illuminate\Support\Facades\Event;
+use oncode\rawsearch\events\RowScoreResolving;
+use oncode\rawsearch\events\ScoreResolving;
 use oncode\rawsearch\RawSearch;
 
 /**
  * Sorts the found elements according to the weight configuration.
  */
-class Sort extends Component
+class Sort
 {
-    /** Allows adding points to the score of a single index row. */
-    public const EVENT_ADD_WEIGHT_ROW_SCORE = 'addWeightRowScore';
-
-    /** Allows adding points to the score of an element. */
-    public const EVENT_ADD_WEIGHT_SCORE = 'addWeightScore';
-
     /**
      * Calculates a score for every element row and sorts the rows by it (highest first).
      * In dev mode a `_score` array explains how the score was calculated.
@@ -26,7 +21,7 @@ class Sort extends Component
     {
         $plugin = RawSearch::getInstance();
         $settings = $plugin->getSettings();
-        $devMode = Craft::$app->getConfig()->getGeneral()->devMode;
+        $devMode = Cms::config()->devMode;
         $queryWords = array_filter(explode(' ', $normalizedQuery), fn($w) => $w !== '');
 
         $elementTypeMatchWeights = $plugin->elementTypeConfigs->getAllMatchWeights();
@@ -82,14 +77,8 @@ class Sort extends Component
                     }
                 }
 
-                if ($this->hasEventHandlers(self::EVENT_ADD_WEIGHT_ROW_SCORE)) {
-                    $event = new WeightScoreEvent([
-                        'elementRow' => $elementRow,
-                        'row' => $row,
-                        'score' => $rowScore,
-                        'normalizedQuery' => $normalizedQuery,
-                    ]);
-                    $this->trigger(self::EVENT_ADD_WEIGHT_ROW_SCORE, $event);
+                if (Event::hasListeners(RowScoreResolving::class)) {
+                    event($event = new RowScoreResolving($elementRow, $row, $rowScore, $normalizedQuery));
 
                     if ($event->score !== $rowScore) {
                         $rowExplain[] = ['type' => 'Points from event', 'points' => $event->score - $rowScore];
@@ -104,13 +93,8 @@ class Sort extends Component
                 $score += $rowScore;
             }
 
-            if ($this->hasEventHandlers(self::EVENT_ADD_WEIGHT_SCORE)) {
-                $event = new WeightScoreEvent([
-                    'elementRow' => $elementRows[$key],
-                    'score' => $score,
-                    'normalizedQuery' => $normalizedQuery,
-                ]);
-                $this->trigger(self::EVENT_ADD_WEIGHT_SCORE, $event);
+            if (Event::hasListeners(ScoreResolving::class)) {
+                event($event = new ScoreResolving($elementRows[$key], null, $score, $normalizedQuery));
 
                 if ($event->score !== $score) {
                     $explain[] = ['type' => 'Points from event', 'points' => $event->score - $score];

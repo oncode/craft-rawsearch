@@ -2,47 +2,39 @@
 
 namespace oncode\rawsearch\services;
 
-use Craft;
-use craft\base\Component;
-use craft\base\ElementContainerFieldInterface;
-use craft\base\ElementInterface;
-use craft\base\FieldInterface;
-use craft\base\NestedElementInterface;
-use craft\elements\db\ElementQueryInterface;
-use craft\elements\ElementCollection;
-use craft\fields\BaseRelationField;
-use craft\helpers\Db;
-use craft\helpers\ElementHelper;
-use craft\helpers\Queue;
-use craft\helpers\StringHelper as CraftStringHelper;
+use CraftCms\Cms\Element\Contracts\ElementInterface;
+use CraftCms\Cms\Element\Contracts\NestedElementInterface;
+use CraftCms\Cms\Element\ElementCollection;
+use CraftCms\Cms\Element\ElementHelper;
+use CraftCms\Cms\Element\Queries\Contracts\ElementQueryInterface;
+use CraftCms\Cms\Field\BaseRelationField;
+use CraftCms\Cms\Field\Contracts\ElementContainerFieldInterface;
+use CraftCms\Cms\Field\Contracts\FieldInterface;
+use CraftCms\Cms\Support\Facades\Fields;
+use CraftCms\Cms\Support\Query;
+use CraftCms\Cms\Support\Str;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Log;
 use oncode\rawsearch\db\Table;
-use oncode\rawsearch\events\IndexElementEvent;
+use oncode\rawsearch\events\AttributeValuesResolving;
+use oncode\rawsearch\events\ElementIndexed;
+use oncode\rawsearch\events\ElementIndexing;
+use oncode\rawsearch\events\FieldValuesResolving;
+use oncode\rawsearch\events\IndexRowsResolving;
 use oncode\rawsearch\helpers\IndexHelper;
 use oncode\rawsearch\helpers\StringHelper;
 use oncode\rawsearch\jobs\IndexElements;
 use oncode\rawsearch\jobs\IndexElementType;
 use oncode\rawsearch\RawSearch;
 
+use function Illuminate\Support\defer;
+
 /**
  * Builds the search index.
  */
-class Index extends Component
+class Index
 {
-    /** Fired before an element gets indexed, set `$event->isValid = false` to skip it. */
-    public const EVENT_BEFORE_INDEX_ELEMENT = 'beforeIndexElement';
-
-    /** Fired after an element has been indexed. */
-    public const EVENT_AFTER_INDEX_ELEMENT = 'afterIndexElement';
-
-    /** Allows modifying the attribute values that get indexed (`$event->attributeValues`). */
-    public const EVENT_MODIFY_ATTRIBUTE_VALUES = 'modifyAttributeValues';
-
-    /** Allows modifying the field values that get indexed (`$event->fieldValues`). */
-    public const EVENT_MODIFY_FIELD_VALUES = 'modifyFieldValues';
-
-    /** Allows modifying the rows that get inserted into the index table (`$event->rows`). */
-    public const EVENT_MODIFY_ROWS = 'modifyRows';
-
     /** Nested elements (e.g. Matrix entries) deeper than this are ignored. */
     public int $maxNestingLevel = 10;
 
@@ -69,7 +61,7 @@ class Index extends Component
     public function getIndexableFields(): array
     {
         return array_values(array_filter(
-            Craft::$app->getFields()->getAllFields(),
+            Fields::getAllFields()->all(),
             fn(FieldInterface $field) => $this->isWhitelistedFieldType($field)
         ));
     }
@@ -88,7 +80,8 @@ class Index extends Component
      */
     public function isIndexableElement(ElementInterface $element): bool
     {
-        if ($element instanceof NestedElementInterface && $element->getPrimaryOwnerId()) {
+        // the owner id can be missing on elements loaded in a batch, the field is always there
+        if ($element instanceof NestedElementInterface && ($element->getPrimaryOwnerId() || $element->getField())) {
             return false;
         }
 
@@ -97,7 +90,7 @@ class Index extends Component
 
     public function removeAll(): void
     {
-        Db::truncateTable(Table::INDEX);
+        DB::table(Table::INDEX)->truncate();
     }
 
     /**
@@ -109,18 +102,17 @@ class Index extends Component
             return;
         }
 
-        $condition = ['elementId' => $elementIds];
-
-        if ($siteId) {
-            $condition['siteId'] = $siteId;
+        foreach (array_chunk(array_values($elementIds), 1000) as $ids) {
+            DB::table(Table::INDEX)
+                ->whereIn('elementId', $ids)
+                ->when($siteId, fn($query) => $query->where('siteId', $siteId))
+                ->delete();
         }
-
-        Db::delete(Table::INDEX, $condition);
     }
 
     public function removeByElementType(string $elementType): void
     {
-        Db::delete(Table::INDEX, ['type' => $elementType]);
+        DB::table(Table::INDEX)->where('type', $elementType)->delete();
     }
 
     /**
@@ -131,7 +123,9 @@ class Index extends Component
         $allTypes = RawSearch::getInstance()->elementTypeConfigs->getAllElementTypes();
         $blacklisted = RawSearch::getInstance()->elementTypeConfigs->getBlacklistedElementTypes();
 
-        Db::delete(Table::INDEX, ['or', ['type' => $blacklisted], ['not', ['type' => $allTypes]]]);
+        DB::table(Table::INDEX)
+            ->where(fn($query) => $query->whereIn('type', $blacklisted)->orWhereNotIn('type', $allTypes))
+            ->delete();
     }
 
     /**
@@ -156,38 +150,39 @@ class Index extends Component
             return false;
         }
 
-        $event = new IndexElementEvent(['element' => $element]);
-
-        if ($this->hasEventHandlers(self::EVENT_BEFORE_INDEX_ELEMENT)) {
-            $this->trigger(self::EVENT_BEFORE_INDEX_ELEMENT, $event);
+        if (Event::hasListeners(ElementIndexing::class)) {
+            event($event = new ElementIndexing($element));
 
             if (!$event->isValid) {
                 return false;
             }
         }
 
-        $event->attributeValues = $this->getAttributeValues($element);
+        $attributeValues = $this->getAttributeValues($element);
 
-        if ($this->hasEventHandlers(self::EVENT_MODIFY_ATTRIBUTE_VALUES)) {
-            $this->trigger(self::EVENT_MODIFY_ATTRIBUTE_VALUES, $event);
+        if (Event::hasListeners(AttributeValuesResolving::class)) {
+            event($event = new AttributeValuesResolving($element, $attributeValues));
+            $attributeValues = $event->attributeValues;
         }
 
-        $event->fieldValues = $this->getFieldValues($element);
+        $fieldValues = $this->getFieldValues($element);
 
-        if ($this->hasEventHandlers(self::EVENT_MODIFY_FIELD_VALUES)) {
-            $this->trigger(self::EVENT_MODIFY_FIELD_VALUES, $event);
+        if (Event::hasListeners(FieldValuesResolving::class)) {
+            event($event = new FieldValuesResolving($element, $attributeValues, $fieldValues));
+            $fieldValues = $event->fieldValues;
         }
 
-        $event->rows = $this->getIndexRows($element, $event->attributeValues, $event->fieldValues);
+        $rows = $this->getIndexRows($element, $attributeValues, $fieldValues);
 
-        if ($this->hasEventHandlers(self::EVENT_MODIFY_ROWS)) {
-            $this->trigger(self::EVENT_MODIFY_ROWS, $event);
+        if (Event::hasListeners(IndexRowsResolving::class)) {
+            event($event = new IndexRowsResolving($element, $attributeValues, $fieldValues, $rows));
+            $rows = $event->rows;
         }
 
-        $this->saveIndexRows($event->rows);
+        $this->saveIndexRows($rows);
 
-        if ($this->hasEventHandlers(self::EVENT_AFTER_INDEX_ELEMENT)) {
-            $this->trigger(self::EVENT_AFTER_INDEX_ELEMENT, $event);
+        if (Event::hasListeners(ElementIndexed::class)) {
+            event(new ElementIndexed($element, $attributeValues, $fieldValues, $rows));
         }
 
         return true;
@@ -202,9 +197,9 @@ class Index extends Component
 
         foreach (ElementHelper::searchableAttributes($element) as $attribute) {
             try {
-                $values[$attribute] = CraftStringHelper::toString($element->$attribute ?? '', ' ');
+                $values[$attribute] = Str::toString($element->$attribute ?? '', ' ');
             } catch (\Throwable $e) {
-                Craft::warning("Could not index attribute $attribute of element $element->id: " . $e->getMessage(), 'rawsearch');
+                Log::warning("RawSearch: could not index attribute $attribute of element $element->id: " . $e->getMessage());
             }
         }
 
@@ -250,7 +245,7 @@ class Index extends Component
             try {
                 $keywords = $field->getSearchKeywords($value, $element);
             } catch (\Throwable $e) {
-                Craft::warning("Could not index field $field->handle of element $element->id: " . $e->getMessage(), 'rawsearch');
+                Log::warning("RawSearch: could not index field $field->handle of element $element->id: " . $e->getMessage());
                 continue;
             }
 
@@ -285,7 +280,7 @@ class Index extends Component
     {
         $rows = [];
         $blacklistedWords = $this->getBlacklistedWords();
-        $now = Db::prepareDateForDb(new \DateTime());
+        $now = Query::prepareDateForDb(new \DateTime());
         $base = [
             'elementId' => (int)$element->id,
             'siteId' => (int)$element->siteId,
@@ -330,9 +325,12 @@ class Index extends Component
         }
 
         $columns = ['elementId', 'siteId', 'type', 'attribute', 'fieldId', 'normalizedWords', 'text', 'dateIndexed'];
-        $values = array_map(fn($row) => array_map(fn($column) => $row[$column] ?? null, $columns), $rows);
+        $values = array_map(fn($row) => array_combine($columns, array_map(fn($column) => $row[$column] ?? null, $columns)), $rows);
 
-        Db::batchInsert(Table::INDEX, $columns, $values);
+        // the texts can be big, small chunks keep the statements below max_allowed_packet
+        foreach (array_chunk($values, 20) as $chunk) {
+            DB::table(Table::INDEX)->insert($chunk);
+        }
     }
 
     /**
@@ -364,7 +362,7 @@ class Index extends Component
     }
 
     /**
-     * Remembers an element to reindex at the end of the request.
+     * Remembers an element to reindex at the end of the request (or console command/queue job).
      * Collecting them prevents a queue job per saved element (e.g. when resaving all entries).
      */
     public function queueElement(ElementInterface $element): void
@@ -386,15 +384,19 @@ class Index extends Component
         }
 
         $this->queuedElementIds[$type][$element->id] = $element->id;
+
+        // named, so it's only registered once
+        defer(fn() => $this->pushQueuedElements(), 'rawsearch.pushQueuedElements', always: true);
     }
 
-    public function pushQueuedElements(): void
+    /**
+     * @param bool $sync Whether to index the elements right away instead of pushing queue jobs
+     */
+    public function pushQueuedElements(bool $sync = false): void
     {
         foreach ($this->queuedElementIds as $type => $ids) {
-            Queue::push(new IndexElements([
-                'elementType' => $type,
-                'elementIds' => array_values($ids),
-            ]));
+            $job = new IndexElements($type, array_values($ids));
+            $sync ? dispatch_sync($job) : dispatch($job);
         }
 
         $this->queuedElementIds = [];
@@ -405,7 +407,7 @@ class Index extends Component
      */
     public function queueElementType(string $elementType): void
     {
-        Queue::push(new IndexElementType(['elementType' => $elementType]));
+        dispatch(new IndexElementType($elementType));
     }
 
     /**
@@ -441,7 +443,7 @@ class Index extends Component
             ->site('*')
             ->unique(false)
             ->status(null)
-            ->orderBy(['elements.id' => SORT_ASC]);
+            ->orderBy('elements.id');
     }
 
     /**
@@ -452,12 +454,12 @@ class Index extends Component
     public function indexElementType(string $elementType, ?callable $onProgress = null): int
     {
         $this->morePowerPls();
-        $start = Db::prepareDateForDb(new \DateTime());
+        $start = Query::prepareDateForDb(new \DateTime());
         $query = $this->createElementTypeQuery($elementType);
         $total = $query->count();
         $done = 0;
 
-        foreach (Db::each($query) as $element) {
+        foreach ($query->lazy(100) as $element) {
             $this->indexElement($element);
             $done++;
 
@@ -476,6 +478,6 @@ class Index extends Component
      */
     public function removeStaleRows(string $elementType, string $before): void
     {
-        Db::delete(Table::INDEX, ['and', ['type' => $elementType], ['<', 'dateIndexed', $before]]);
+        DB::table(Table::INDEX)->where('type', $elementType)->where('dateIndexed', '<', $before)->delete();
     }
 }

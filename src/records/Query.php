@@ -2,7 +2,8 @@
 
 namespace oncode\rawsearch\records;
 
-use craft\db\ActiveRecord;
+use CraftCms\Cms\Shared\BaseModel;
+use CraftCms\Cms\Shared\Concerns\HasUid;
 use oncode\rawsearch\db\Table;
 
 /**
@@ -14,12 +15,18 @@ use oncode\rawsearch\db\Table;
  * @property bool $or
  * @property int $mode
  * @property int $results
- * @property \DateTime $dateCreated
+ * @property \DateTimeInterface $dateCreated
  */
-class Query extends ActiveRecord
+class Query extends BaseModel
 {
-    public static function tableName(): string
-    {
-        return Table::QUERIES;
-    }
+    use HasUid;
+
+    protected $table = Table::QUERIES;
+
+    protected $casts = [
+        'siteId' => 'integer',
+        'or' => 'boolean',
+        'mode' => 'integer',
+        'results' => 'integer',
+    ];
 }

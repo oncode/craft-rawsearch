@@ -2,18 +2,25 @@
 
 namespace oncode\rawsearch\tests;
 
-use Craft;
-use craft\elements\Entry;
-use craft\fieldlayoutelements\CustomField;
-use craft\fieldlayoutelements\entries\EntryTitleField;
-use craft\fields\Matrix;
-use craft\fields\PlainText;
-use craft\models\EntryType;
-use craft\models\FieldLayout;
-use craft\models\FieldLayoutTab;
-use craft\models\Section;
-use craft\models\Section_SiteSettings;
-use craft\models\Site;
+use CraftCms\Cms\Element\Enums\PropagationMethod;
+use CraftCms\Cms\Entry\Data\EntryType;
+use CraftCms\Cms\Entry\Elements\Entry;
+use CraftCms\Cms\Field\Matrix;
+use CraftCms\Cms\Field\PlainText;
+use CraftCms\Cms\FieldLayout\FieldLayout;
+use CraftCms\Cms\FieldLayout\FieldLayoutTab;
+use CraftCms\Cms\FieldLayout\LayoutElements\CustomField;
+use CraftCms\Cms\FieldLayout\LayoutElements\Entries\EntryTitleField;
+use CraftCms\Cms\Section\Data\Section;
+use CraftCms\Cms\Section\Data\SectionSiteSettings;
+use CraftCms\Cms\Section\Enums\SectionType;
+use CraftCms\Cms\Site\Data\Site;
+use CraftCms\Cms\Support\Facades\Elements;
+use CraftCms\Cms\Support\Facades\EntryTypes;
+use CraftCms\Cms\Support\Facades\Fields;
+use CraftCms\Cms\Support\Facades\Sections;
+use CraftCms\Cms\Support\Facades\Sites;
+use CraftCms\Cms\Validation\Contracts\Validatable;
 use oncode\rawsearch\RawSearch;
 use RuntimeException;
 
@@ -108,10 +115,14 @@ class ContentFixture
      */
     public function reset(): void
     {
-        $elements = Craft::$app->getElements();
+        $ids = Entry::find()->sectionId($this->section->id)->status(null)->site('*')->trashed(null)->ids();
 
-        foreach (Entry::find()->sectionId($this->section->id)->status(null)->site('*')->unique()->trashed(null)->all() as $entry) {
-            $elements->deleteElement($entry, true);
+        foreach (array_unique($ids) as $id) {
+            $entry = Entry::find()->id($id)->status(null)->trashed(null)->one();
+
+            if ($entry) {
+                Elements::deleteElement($entry, true);
+            }
         }
 
         $this->ids = [];
@@ -139,12 +150,11 @@ class ContentFixture
     }
 
     /**
-     * Pushes the elements RawSearch collected during saving and runs the queue.
+     * Indexes the elements RawSearch collected during saving (the tests run with the sync queue).
      */
     public static function runQueue(): void
     {
         RawSearch::getInstance()->index->pushQueuedElements();
-        Craft::$app->getQueue()->run();
     }
 
     private function createEntry(array $data): Entry
@@ -200,12 +210,8 @@ class ContentFixture
 
     private function createStructure(): void
     {
-        $sites = Craft::$app->getSites();
-        $fields = Craft::$app->getFields();
-        $entries = Craft::$app->getEntries();
-
-        $this->primarySite = $sites->getPrimarySite();
-        $deSite = $sites->getSiteByHandle(self::SITE_HANDLE);
+        $this->primarySite = Sites::getPrimarySite();
+        $deSite = Sites::getSiteByHandle(self::SITE_HANDLE);
 
         if (!$deSite) {
             $deSite = new Site([
@@ -214,19 +220,19 @@ class ContentFixture
                 'handle' => self::SITE_HANDLE,
                 'language' => 'de-CH',
                 'hasUrls' => true,
-                'baseUrl' => '@web/rawsearch-test-de',
+                'baseUrl' => $this->primarySite->getBaseUrl() . 'rawsearch-test-de',
             ]);
-            $this->save($deSite, fn() => $sites->saveSite($deSite));
+            $this->save($deSite, fn() => Sites::saveSite($deSite));
         }
 
         $this->deSite = $deSite;
 
-        $field = function(string $class, string $handle, array $config = []) use ($fields) {
-            $field = $fields->getFieldByHandle($handle);
+        $field = function(string $class, string $handle, array $config = []) {
+            $field = Fields::getFieldByHandle($handle);
 
             if (!$field) {
                 $field = new $class(array_merge(['name' => $handle, 'handle' => $handle, 'translationMethod' => 'site'], $config));
-                $this->save($field, fn() => $fields->saveField($field));
+                $this->save($field, fn() => Fields::saveField($field));
             }
 
             return $field;
@@ -237,12 +243,12 @@ class ContentFixture
         $secret = $field(PlainText::class, 'rsSecret');
         $blockText = $field(PlainText::class, 'rsBlockText', ['multiline' => true]);
 
-        $blockType = $entries->getEntryTypeByHandle('rsTextBlock');
+        $blockType = EntryTypes::getEntryTypeByHandle('rsTextBlock');
 
         if (!$blockType) {
             $blockType = new EntryType(['name' => 'RS Text Block', 'handle' => 'rsTextBlock', 'hasTitleField' => false]);
             $blockType->setFieldLayout($this->layout([$blockText], false));
-            $this->save($blockType, fn() => $entries->saveEntryType($blockType));
+            $this->save($blockType, fn() => EntryTypes::saveEntryType($blockType));
         }
 
         $matrix = $field(Matrix::class, 'rsBlocks', [
@@ -251,29 +257,29 @@ class ContentFixture
             'translationMethod' => 'none',
         ]);
 
-        $pageType = $entries->getEntryTypeByHandle('rsPage');
+        $pageType = EntryTypes::getEntryTypeByHandle('rsPage');
 
         if (!$pageType) {
             $pageType = new EntryType(['name' => 'RS Page', 'handle' => 'rsPage']);
             $pageType->setFieldLayout($this->layout([$intro, $body, $secret, $matrix]));
-            $this->save($pageType, fn() => $entries->saveEntryType($pageType));
+            $this->save($pageType, fn() => EntryTypes::saveEntryType($pageType));
         }
 
         $this->pageType = $pageType;
-        $section = $entries->getSectionByHandle(self::SECTION_HANDLE);
+        $section = Sections::getSectionByHandle(self::SECTION_HANDLE);
 
         if (!$section) {
             $section = new Section([
                 'name' => 'RawSearch Test Pages',
                 'handle' => self::SECTION_HANDLE,
-                'type' => Section::TYPE_CHANNEL,
-                'propagationMethod' => Section::PROPAGATION_METHOD_ALL,
+                'type' => SectionType::Channel,
+                'propagationMethod' => PropagationMethod::All,
             ]);
             $section->setEntryTypes([$pageType]);
             $siteSettings = [];
 
             foreach ([$this->primarySite, $this->deSite] as $site) {
-                $siteSettings[$site->id] = new Section_SiteSettings([
+                $siteSettings[$site->id] = new SectionSiteSettings([
                     'siteId' => $site->id,
                     'enabledByDefault' => true,
                     'hasUrls' => true,
@@ -283,7 +289,7 @@ class ContentFixture
             }
 
             $section->setSiteSettings($siteSettings);
-            $this->save($section, fn() => $entries->saveSection($section));
+            $this->save($section, fn() => Sections::saveSection($section));
         }
 
         $this->section = $section;
@@ -305,10 +311,11 @@ class ContentFixture
 
     private function save(object $model, ?callable $save = null): void
     {
-        $saved = $save ? $save() : Craft::$app->getElements()->saveElement($model);
+        $saved = $save ? $save() : Elements::saveElement($model);
 
         if (!$saved) {
-            throw new RuntimeException('Could not save ' . get_class($model) . ': ' . json_encode($model->getErrors()));
+            $errors = $model instanceof Validatable ? $model->errors()->getMessages() : [];
+            throw new RuntimeException('Could not save ' . get_class($model) . ': ' . json_encode($errors));
         }
     }
 }

@@ -2,17 +2,16 @@
 
 namespace oncode\rawsearch\events;
 
-use yii\base\Event;
-
 /**
- * Allows modifying a list of rows (result rows, results or autocomplete words).
+ * Base class of the events that allow modifying a list of rows (result rows, results or autocomplete words).
  * Change `$event->rows` to modify them.
  */
-class RowsEvent extends Event
+abstract class RowsEvent
 {
-    public array $rows = [];
-
-    public string $normalizedQuery = '';
-
-    public array $config = [];
+    public function __construct(
+        public array $rows = [],
+        public string $normalizedQuery = '',
+        public array $config = [],
+    ) {
+    }
 }

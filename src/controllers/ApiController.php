@@ -2,55 +2,47 @@
 
 namespace oncode\rawsearch\controllers;
 
-use Craft;
-use craft\web\Controller;
+use CraftCms\Cms\Cms;
+use CraftCms\Cms\Http\RespondsWithFlash;
+use CraftCms\Cms\Support\Facades\Elements;
+use CraftCms\Cms\Support\Flash;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Log;
+use InvalidArgumentException;
 use oncode\rawsearch\RawSearch;
-use yii\base\InvalidArgumentException;
-use yii\web\ForbiddenHttpException;
-use yii\web\Response;
+use Symfony\Component\HttpFoundation\Response;
+
+use function CraftCms\Cms\currentUser;
+use function CraftCms\Cms\t;
 
 /**
  * JSON API for searching, autocompleting and reindexing.
+ *
+ * `queries` and `reindex-*` are protected by the API key (or a logged in user with the right permission).
+ * Their routes skip Laravel's CSRF check, requests with the key come from other systems and have no token.
  */
-class ApiController extends Controller
+class ApiController
 {
-    /** Actions that are protected by the API key (or a logged in user with the right permission). */
-    private const KEY_ACTIONS = ['queries', 'reindex-elements', 'reindex-element-types'];
-
-    protected array|bool|int $allowAnonymous = [
-        'search',
-        'autocomplete',
-        'queries',
-        'reindex-elements',
-        'reindex-element-types',
-    ];
-
-    public function beforeAction($action): bool
-    {
-        // requests authenticated with the api key come from other systems and have no CSRF token
-        if (in_array($action->id, self::KEY_ACTIONS, true) && $this->request->getParam('key') !== null) {
-            $this->enableCsrfValidation = false;
-        }
-
-        return parent::beforeAction($action);
-    }
+    use RespondsWithFlash;
 
     /**
      * Returns search results as JSON (or rendered HTML with `html=1`).
      */
-    public function actionSearch(): Response
+    public function search(Request $request): JsonResponse
     {
-        $params = $this->searchParams();
+        $params = $this->searchParams($request);
 
         foreach (['or' => 'bool', 'mode' => 'int', 'page' => 'int', 'resultsPerPage' => 'int', 'weightedSort' => 'bool'] as $name => $type) {
-            $value = $this->request->getParam($name);
+            $value = $request->input($name);
 
             if ($value !== null && $value !== '') {
                 $params[$name] = $type === 'int' ? (int)$value : (bool)$value;
             }
         }
 
-        $extract = $this->request->getParam('extract');
+        $extract = $request->input('extract');
 
         if (is_array($extract)) {
             $params['extract'] = $extract;
@@ -64,7 +56,7 @@ class ApiController extends Controller
             return $this->errorResponse($e);
         }
 
-        if ($this->request->getParam('html')) {
+        if ($request->input('html')) {
             $result = RawSearch::getInstance()->search->renderResults($search, $params['query']);
         } else {
             // elements are not serialized, they would expose all their data
@@ -76,7 +68,7 @@ class ApiController extends Controller
 
         $pagination = $search['pagination'];
 
-        return $this->asJson([
+        return new JsonResponse([
             'error' => false,
             'total' => $search['total'],
             'pagination' => [
@@ -93,10 +85,10 @@ class ApiController extends Controller
     /**
      * Returns the words starting with the given query.
      */
-    public function actionAutocomplete(): Response
+    public function autocomplete(Request $request): JsonResponse
     {
-        $params = $this->searchParams();
-        $limit = $this->request->getParam('limit');
+        $params = $this->searchParams($request);
+        $limit = $request->input('limit');
 
         if ($limit !== null && $limit !== '') {
             $params['limit'] = (int)$limit;
@@ -108,7 +100,7 @@ class ApiController extends Controller
             return $this->errorResponse($e);
         }
 
-        return $this->asJson([
+        return new JsonResponse([
             'error' => false,
             'result' => $words,
         ]);
@@ -117,15 +109,21 @@ class ApiController extends Controller
     /**
      * Returns the most searched queries.
      */
-    public function actionQueries(): Response
+    public function queries(Request $request): JsonResponse
     {
-        $this->requireApiKey(RawSearch::PERMISSION_ACCESS_STATISTIC);
+        $this->requireApiKey($request, RawSearch::PERMISSION_ACCESS_STATISTIC);
 
-        $site = $this->request->getParam('site');
-        $siteId = $site ? RawSearch::getInstance()->search->resolveSite($site)->id : null;
-        $limit = (int)$this->request->getParam('limit', 10);
+        $site = $request->input('site');
 
-        return $this->asJson([
+        try {
+            $siteId = $site ? RawSearch::getInstance()->search->resolveSite($site)->id : null;
+        } catch (InvalidArgumentException $e) {
+            return $this->errorResponse($e);
+        }
+
+        $limit = (int)$request->input('limit', 10);
+
+        return new JsonResponse([
             'error' => false,
             'result' => RawSearch::getInstance()->queries->getMostSearched($siteId, max(1, min($limit, 1000))),
         ]);
@@ -134,18 +132,16 @@ class ApiController extends Controller
     /**
      * Reindexes elements by id (`elementIds`, comma separated).
      */
-    public function actionReindexElements(): Response
+    public function reindexElements(Request $request): Response
     {
-        $this->requireApiKey(RawSearch::PERMISSION_EDIT_INDEX_SETTINGS);
+        $this->requireApiKey($request, RawSearch::PERMISSION_EDIT_INDEX_SETTINGS);
 
-        $ids = $this->request->getParam('elementIds', '');
+        $ids = $request->input('elementIds', '');
         $ids = array_filter(array_map('intval', is_array($ids) ? $ids : explode(',', (string)$ids)));
         $index = RawSearch::getInstance()->index;
 
-        $elements = Craft::$app->getElements();
-
         foreach ($ids as $id) {
-            $element = $elements->getElementById($id, null, '*');
+            $element = Elements::getElementById($id, null, '*');
 
             if ($element) {
                 $index->queueElement($element);
@@ -154,25 +150,25 @@ class ApiController extends Controller
 
         $index->pushQueuedElements();
 
-        return $this->taskResponse();
+        return $this->taskResponse($request);
     }
 
     /**
      * Reindexes element types (`elementTypes`, comma separated, or `all=1`).
      */
-    public function actionReindexElementTypes(): Response
+    public function reindexElementTypes(Request $request): Response
     {
-        $this->requireApiKey(RawSearch::PERMISSION_EDIT_INDEX_SETTINGS);
+        $this->requireApiKey($request, RawSearch::PERMISSION_EDIT_INDEX_SETTINGS);
 
         $index = RawSearch::getInstance()->index;
 
-        if ($this->request->getParam('all')) {
+        if ($request->input('all')) {
             $index->queueAll();
-            return $this->taskResponse();
+            return $this->taskResponse($request);
         }
 
         try {
-            $types = RawSearch::getInstance()->search->resolveElementTypes($this->request->getParam('elementTypes')) ?? [];
+            $types = RawSearch::getInstance()->search->resolveElementTypes($request->input('elementTypes')) ?? [];
         } catch (InvalidArgumentException $e) {
             return $this->errorResponse($e);
         }
@@ -181,17 +177,17 @@ class ApiController extends Controller
             $index->queueElementType($type);
         }
 
-        return $this->taskResponse();
+        return $this->taskResponse($request);
     }
 
-    private function searchParams(): array
+    private function searchParams(Request $request): array
     {
         $params = [
-            'query' => (string)$this->request->getParam('query', ''),
-            'site' => $this->request->getParam('site'),
+            'query' => (string)$request->input('query', ''),
+            'site' => $request->input('site'),
         ];
 
-        $elementTypes = $this->request->getParam('elementTypes');
+        $elementTypes = $request->input('elementTypes');
 
         if ($elementTypes) {
             $params['elementTypes'] = is_array($elementTypes) ? $elementTypes : explode(',', (string)$elementTypes);
@@ -200,57 +196,55 @@ class ApiController extends Controller
         return $params;
     }
 
-    private function requireApiKey(string $permission): void
+    private function requireApiKey(Request $request, string $permission): void
     {
         $apiKey = RawSearch::getInstance()->getSettings()->apiKey;
-        $key = (string)$this->request->getParam('key', '');
+        $key = (string)$request->input('key', '');
 
         if ($apiKey !== '' && $key !== '' && hash_equals($apiKey, $key)) {
             return;
         }
 
-        $user = Craft::$app->getUser();
+        abort_if(!currentUser() || !Gate::check($permission), 403, 'Invalid API key');
 
-        if (!$user->getIsGuest() && $user->checkPermission($permission)) {
-            return;
+        // the route skips the CSRF check for requests with the key, session requests still need a token
+        if (!$request->isMethodSafe()) {
+            $token = (string)($request->input('_token') ?? $request->header('X-CSRF-TOKEN'));
+            abort_unless($request->hasSession() && hash_equals((string)$request->session()->token(), $token), 419);
         }
-
-        throw new ForbiddenHttpException('Invalid API key');
     }
 
-    private function taskResponse(): Response
+    private function taskResponse(Request $request): Response
     {
-        $message = Craft::t('rawsearch', 'Search index update started.');
+        $message = t('Search index update started.', category: 'rawsearch');
 
-        if ($this->request->getBodyParam('redirect') !== null) {
-            $this->setSuccessFlash($message);
+        if ($request->input('redirect') !== null) {
+            Flash::success($message);
             return $this->redirectToPostedUrl();
         }
 
-        return $this->asJson([
+        return new JsonResponse([
             'error' => false,
             'message' => $message,
         ]);
     }
 
-    private function errorResponse(\Throwable $e): Response
+    private function errorResponse(\Throwable $e): JsonResponse
     {
         $isUserError = $e instanceof InvalidArgumentException;
 
         if (!$isUserError) {
-            Craft::error($e, 'rawsearch');
+            Log::error($e);
         }
 
-        $message = $isUserError || Craft::$app->getConfig()->getGeneral()->devMode
+        $message = $isUserError || Cms::config()->devMode
             ? $e->getMessage()
             : 'An error occurred while searching.';
 
-        $this->response->setStatusCode($isUserError ? 400 : 500);
-
-        return $this->asJson([
+        return new JsonResponse([
             'error' => true,
             'result' => null,
             'message' => $message,
-        ]);
+        ], $isUserError ? 400 : 500);
     }
 }

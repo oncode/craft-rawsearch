@@ -2,8 +2,8 @@
  # RawSearch demo: server rendered search with AJAX autocomplete and AJAX results.
  # Works without JavaScript too (plain form submit).
  #}
-{% set query = craft.app.request.getParam('query') %}
-{% set snippets = craft.app.request.getParam('snippets') == 'words' ? 'words' : 'sentences' %}
+{% set query = Request.input('query') %}
+{% set snippets = Request.input('snippets') == 'words' ? 'words' : 'sentences' %}
 <!doctype html>
 <html lang="{{ currentSite.language }}">
 <head>
@@ -62,7 +62,7 @@
             {% set search = craft.rawSearch.search({
                 query: query,
                 resultsPerPage: 5,
-                page: craft.app.request.getParam('page'),
+                page: Request.input('page'),
                 extract: { type: snippets },
             }) %}
             {{ craft.rawSearch.renderResults(search, query) }}

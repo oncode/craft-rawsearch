@@ -1,98 +1,94 @@
 <?php
 
-namespace oncode\rawsearch\migrations;
-
-use Craft;
-use craft\db\Migration;
-use craft\db\Table as CraftTable;
+use CraftCms\Cms\Database\Migration;
+use CraftCms\Cms\Database\Table as CraftTable;
+use CraftCms\Cms\Support\Str;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use oncode\rawsearch\db\Table;
 use oncode\rawsearch\services\ElementTypeConfigs;
 
-class Install extends Migration
+return new class extends Migration
 {
-    public function safeUp(): bool
+    public function up(): void
     {
-        $this->createTable(Table::INDEX, [
-            'id' => $this->primaryKey(),
-            'elementId' => $this->integer()->notNull(),
-            'siteId' => $this->integer()->notNull(),
-            'type' => $this->string()->notNull(),
-            'attribute' => $this->string(50),
-            'fieldId' => $this->integer(),
-            'normalizedWords' => $this->mediumText()->notNull(),
-            'text' => $this->mediumText()->notNull(),
-            'dateIndexed' => $this->dateTime()->notNull(),
-        ]);
-        $this->createIndex(null, Table::INDEX, ['elementId', 'siteId']);
-        $this->createIndex(null, Table::INDEX, ['siteId', 'type']);
-        $this->addForeignKey(null, Table::INDEX, ['elementId'], CraftTable::ELEMENTS, ['id'], 'CASCADE');
-        $this->addForeignKey(null, Table::INDEX, ['siteId'], CraftTable::SITES, ['id'], 'CASCADE', 'CASCADE');
+        Schema::create(Table::INDEX, function(Blueprint $table) {
+            $table->id();
+            $table->integer('elementId');
+            $table->integer('siteId');
+            $table->string('type');
+            $table->string('attribute', 50)->nullable();
+            $table->integer('fieldId')->nullable();
+            $table->mediumText('normalizedWords');
+            $table->mediumText('text');
+            $table->dateTime('dateIndexed');
+            $table->index(['elementId', 'siteId']);
+            $table->index(['siteId', 'type']);
+            $table->foreign('elementId')->references('id')->on(CraftTable::ELEMENTS)->cascadeOnDelete();
+            $table->foreign('siteId')->references('id')->on(CraftTable::SITES)->cascadeOnDelete()->cascadeOnUpdate();
+        });
 
-        if ($this->db->getIsMysql()) {
+        if (DB::isMysql()) {
             // The stopword list is bound to the fulltext index when it gets created.
             // Without stopwords, common words like "about" or "und" stay searchable.
-            $this->execute('SET SESSION innodb_ft_enable_stopword = 0');
-            $this->execute(sprintf(
-                'CREATE FULLTEXT INDEX %s ON %s (%s)',
-                $this->db->quoteTableName($this->db->getIndexName()),
-                $this->db->quoteTableName(Table::INDEX),
-                $this->db->quoteColumnName('normalizedWords'),
-            ));
+            DB::statement('SET SESSION innodb_ft_enable_stopword = 0');
+            Schema::table(Table::INDEX, fn(Blueprint $table) => $table->fullText('normalizedWords'));
         }
 
-        $this->createTable(Table::ELEMENT_TYPE_CONFIGS, [
-            'id' => $this->primaryKey(),
-            'type' => $this->string()->notNull(),
-            'index' => $this->boolean()->notNull()->defaultValue(true),
-            'matchWeight' => $this->smallInteger(),
-            'dateCreated' => $this->dateTime()->notNull(),
-            'dateUpdated' => $this->dateTime()->notNull(),
-            'uid' => $this->uid(),
-        ]);
-        $this->createIndex(null, Table::ELEMENT_TYPE_CONFIGS, ['type'], true);
+        Schema::create(Table::ELEMENT_TYPE_CONFIGS, function(Blueprint $table) {
+            $table->id();
+            $table->string('type')->unique();
+            $table->boolean('index')->default(true);
+            $table->smallInteger('matchWeight')->nullable();
+            $table->dateTime('dateCreated');
+            $table->dateTime('dateUpdated');
+            $table->char('uid', 36)->default('0');
+        });
 
-        $this->createTable(Table::FIELD_CONFIGS, [
-            'id' => $this->primaryKey(),
-            'fieldId' => $this->integer()->notNull(),
-            'index' => $this->boolean()->notNull()->defaultValue(true),
-            'matchWeight' => $this->smallInteger(),
-            'partialMatchWeight' => $this->smallInteger(),
-            'dateCreated' => $this->dateTime()->notNull(),
-            'dateUpdated' => $this->dateTime()->notNull(),
-            'uid' => $this->uid(),
-        ]);
-        $this->createIndex(null, Table::FIELD_CONFIGS, ['fieldId'], true);
-        $this->addForeignKey(null, Table::FIELD_CONFIGS, ['fieldId'], CraftTable::FIELDS, ['id'], 'CASCADE');
+        Schema::create(Table::FIELD_CONFIGS, function(Blueprint $table) {
+            $table->id();
+            $table->integer('fieldId')->unique();
+            $table->boolean('index')->default(true);
+            $table->smallInteger('matchWeight')->nullable();
+            $table->smallInteger('partialMatchWeight')->nullable();
+            $table->dateTime('dateCreated');
+            $table->dateTime('dateUpdated');
+            $table->char('uid', 36)->default('0');
+            $table->foreign('fieldId')->references('id')->on(CraftTable::FIELDS)->cascadeOnDelete();
+        });
 
-        $this->createTable(Table::QUERIES, [
-            'id' => $this->primaryKey(),
-            'siteId' => $this->integer()->notNull(),
-            'query' => $this->string()->notNull(),
-            'or' => $this->boolean()->notNull()->defaultValue(false),
-            'mode' => $this->smallInteger()->notNull(),
-            'results' => $this->integer()->notNull()->defaultValue(0),
-            'dateCreated' => $this->dateTime()->notNull(),
-            'dateUpdated' => $this->dateTime()->notNull(),
-            'uid' => $this->uid(),
-        ]);
-        $this->createIndex(null, Table::QUERIES, ['siteId', 'query']);
-        $this->createIndex(null, Table::QUERIES, ['dateCreated']);
-        $this->addForeignKey(null, Table::QUERIES, ['siteId'], CraftTable::SITES, ['id'], 'CASCADE', 'CASCADE');
+        Schema::create(Table::QUERIES, function(Blueprint $table) {
+            $table->id();
+            $table->integer('siteId');
+            $table->string('query');
+            $table->boolean('or')->default(false);
+            $table->smallInteger('mode');
+            $table->integer('results')->default(0);
+            $table->dateTime('dateCreated');
+            $table->dateTime('dateUpdated');
+            $table->char('uid', 36)->default('0');
+            $table->index(['siteId', 'query']);
+            $table->index(['dateCreated']);
+            $table->foreign('siteId')->references('id')->on(CraftTable::SITES)->cascadeOnDelete()->cascadeOnUpdate();
+        });
 
-        foreach (ElementTypeConfigs::DEFAULT_BLACKLISTED as $type) {
-            $this->insert(Table::ELEMENT_TYPE_CONFIGS, ['type' => $type, 'index' => false]);
-        }
+        $now = now();
 
-        return true;
+        DB::table(Table::ELEMENT_TYPE_CONFIGS)->insert(array_map(fn($type) => [
+            'type' => $type,
+            'index' => false,
+            'dateCreated' => $now,
+            'dateUpdated' => $now,
+            'uid' => Str::uuid7()->toString(),
+        ], ElementTypeConfigs::DEFAULT_BLACKLISTED));
     }
 
-    public function safeDown(): bool
+    public function down(): void
     {
-        $this->dropTableIfExists(Table::QUERIES);
-        $this->dropTableIfExists(Table::FIELD_CONFIGS);
-        $this->dropTableIfExists(Table::ELEMENT_TYPE_CONFIGS);
-        $this->dropTableIfExists(Table::INDEX);
-
-        return true;
+        Schema::dropIfExists(Table::QUERIES);
+        Schema::dropIfExists(Table::FIELD_CONFIGS);
+        Schema::dropIfExists(Table::ELEMENT_TYPE_CONFIGS);
+        Schema::dropIfExists(Table::INDEX);
     }
-}
+};

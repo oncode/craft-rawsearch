@@ -2,10 +2,12 @@
 
 namespace oncode\rawsearch\tests\integration;
 
-use Craft;
-use craft\elements\Asset;
-use craft\elements\Entry;
-use craft\elements\User;
+use CraftCms\Cms\Asset\Elements\Asset;
+use CraftCms\Cms\Entry\Elements\Entry;
+use CraftCms\Cms\ProjectConfig\ProjectConfig as ProjectConfigService;
+use CraftCms\Cms\Support\Facades\Fields;
+use CraftCms\Cms\Support\Facades\ProjectConfig;
+use CraftCms\Cms\User\Elements\User;
 use oncode\rawsearch\records\ElementTypeConfig;
 use oncode\rawsearch\records\FieldConfig;
 use oncode\rawsearch\tests\TestCase;
@@ -39,11 +41,11 @@ class ConfigTest extends TestCase
         $configs->saveMatchWeight(Entry::class, 500);
 
         $this->assertSame(500, $configs->getMatchWeight(Entry::class));
-        $this->assertNotNull(ElementTypeConfig::findOne(['type' => Entry::class]));
+        $this->assertNotNull(ElementTypeConfig::query()->where('type', Entry::class)->first());
 
         // the default weight removes the record
         $configs->saveMatchWeight(Entry::class, $this->plugin()->getSettings()->elementTypeMatchWeight);
-        $this->assertNull(ElementTypeConfig::findOne(['type' => Entry::class]));
+        $this->assertNull(ElementTypeConfig::query()->where('type', Entry::class)->first());
     }
 
     public function testElementTypeIndexKeepsWeight(): void
@@ -63,7 +65,7 @@ class ConfigTest extends TestCase
     public function testFieldConfigs(): void
     {
         $configs = $this->plugin()->fieldConfigs;
-        $field = Craft::$app->getFields()->getFieldByHandle('rsBody');
+        $field = Fields::getFieldByHandle('rsBody');
         $settings = $this->plugin()->getSettings();
 
         $configs->saveMatchWeights($field->id, 50, $settings->partialFieldMatchWeight);
@@ -75,7 +77,7 @@ class ConfigTest extends TestCase
 
         $configs->saveIndex($field->id, true);
         $configs->saveMatchWeights($field->id, $settings->fieldMatchWeight, $settings->partialFieldMatchWeight);
-        $this->assertNull(FieldConfig::findOne(['fieldId' => $field->id]));
+        $this->assertNull(FieldConfig::query()->where('fieldId', $field->id)->first());
     }
 
     public function testIndexableFields(): void
@@ -88,19 +90,18 @@ class ConfigTest extends TestCase
 
     public function testSaveSettingsKeepsOtherSettings(): void
     {
-        $projectConfig = Craft::$app->getProjectConfig();
-        $path = 'plugins.rawsearch.settings';
-        $original = $projectConfig->get($path) ?? [];
+        $path = ProjectConfigService::PATH_PLUGINS . '.rawsearch.settings';
+        $original = ProjectConfig::get($path) ?? [];
 
         try {
             $this->plugin()->saveSettings(['apiKey' => 'test-key-123']);
             $this->plugin()->saveSettings(['titleMatchWeight' => 123]);
 
-            $stored = $projectConfig->get($path);
+            $stored = ProjectConfig::get($path);
             $this->assertSame('test-key-123', $stored['apiKey']);
             $this->assertSame(123, (int)$stored['titleMatchWeight']);
         } finally {
-            $projectConfig->set($path, $original);
+            ProjectConfig::set($path, $original);
         }
     }
 

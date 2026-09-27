@@ -2,8 +2,9 @@
 
 namespace oncode\rawsearch\variables;
 
-use craft\db\Query;
-use craft\helpers\Template;
+use CraftCms\Cms\Support\Template;
+use CraftCms\Cms\Twig\Variables\Paginate;
+use Illuminate\Database\Query\Builder;
 use oncode\rawsearch\models\Settings;
 use oncode\rawsearch\RawSearch;
 use Twig\Markup;
@@ -21,7 +22,7 @@ class RawSearchVariable
     /**
      * Searches the index, see README for the params.
      *
-     * @return array{results: array, pagination: \craft\web\twig\variables\Paginate, total: int}
+     * @return array{results: array, pagination: Paginate, total: int}
      */
     public function search(array $params): array
     {
@@ -60,7 +61,7 @@ class RawSearchVariable
     /**
      * Returns a db query for the stored search queries.
      */
-    public function queries(array $params = []): Query
+    public function queries(array $params = []): Builder
     {
         $plugin = RawSearch::getInstance();
         $siteId = !empty($params['site']) ? $plugin->search->resolveSite($params['site'])->id : null;

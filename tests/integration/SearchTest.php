@@ -2,21 +2,27 @@
 
 namespace oncode\rawsearch\tests\integration;
 
-use Craft;
-use craft\db\Query;
-use craft\elements\db\EntryQuery;
-use craft\elements\Entry;
-use craft\web\twig\variables\Paginate;
+use CraftCms\Cms\Cms;
+use CraftCms\Cms\Database\Table as CraftTable;
+use CraftCms\Cms\Element\Queries\EntryQuery;
+use CraftCms\Cms\Entry\Elements\Entry;
+use CraftCms\Cms\Support\Facades\Elements;
+use CraftCms\Cms\Support\Facades\Fields;
+use CraftCms\Cms\Support\Query;
+use CraftCms\Cms\Twig\Variables\Paginate;
+use Illuminate\Support\Facades\DB;
 use oncode\rawsearch\db\Table;
-use oncode\rawsearch\events\DbQueryEvent;
-use oncode\rawsearch\events\ElementQueryEvent;
-use oncode\rawsearch\events\RowsEvent;
-use oncode\rawsearch\events\SearchEvent;
-use oncode\rawsearch\events\WeightScoreEvent;
+use oncode\rawsearch\events\ElementQueryResolving;
+use oncode\rawsearch\events\ResultRowsResolving;
+use oncode\rawsearch\events\ResultsResolving;
+use oncode\rawsearch\events\RowScoreResolving;
+use oncode\rawsearch\events\ScoreResolving;
+use oncode\rawsearch\events\Searched;
+use oncode\rawsearch\events\Searching;
+use InvalidArgumentException;
+use oncode\rawsearch\events\SearchQueryResolving;
 use oncode\rawsearch\services\Search;
-use oncode\rawsearch\services\Sort;
 use oncode\rawsearch\tests\TestCase;
-use yii\base\InvalidArgumentException;
 
 class SearchTest extends TestCase
 {
@@ -272,7 +278,7 @@ class SearchTest extends TestCase
         // the ferry is mentioned in the title of the ferry entry and in a Matrix block of the quokka entry
         $this->assertSame('Ferry timetable', $this->titles('ferry')[0]);
 
-        $blockText = Craft::$app->getFields()->getFieldByHandle('rsBlockText');
+        $blockText = Fields::getFieldByHandle('rsBlockText');
         $this->plugin()->fieldConfigs->saveMatchWeights($blockText->id, 30000, 30000);
 
         $this->assertSame('Quokka habitat protection', $this->titles('ferry')[0]);
@@ -311,7 +317,7 @@ class SearchTest extends TestCase
 
     public function testElementQueryEvent(): void
     {
-        $this->on(Search::class, Search::EVENT_MODIFY_ELEMENT_QUERY, function(ElementQueryEvent $event) {
+        $this->on(ElementQueryResolving::class, function(ElementQueryResolving $event) {
             if ($event->query instanceof EntryQuery) {
                 $event->query->title('Ferry timetable');
             }
@@ -327,21 +333,20 @@ class SearchTest extends TestCase
     {
         // the README example with the fixture section instead of "news"
         $cutoff = function(string $date) {
-            return function(ElementQueryEvent $event) use ($date) {
+            return function(ElementQueryResolving $event) use ($date) {
                 if ($event->query instanceof EntryQuery) {
-                    $event->query->andWhere(['or',
-                        ['not', ['entries.sectionId' => self::$fixture->section->id]],
-                        ['>=', 'entries.postDate', \craft\helpers\Db::prepareDateForDb(new \DateTime($date))],
-                    ]);
+                    $event->query->where(fn($query) => $query
+                        ->where('entries.sectionId', '<>', self::$fixture->section->id)
+                        ->orWhere('entries.postDate', '>=', Query::prepareDateForDb(new \DateTime($date))));
                 }
             };
         };
 
-        $this->on(Search::class, Search::EVENT_MODIFY_ELEMENT_QUERY, $cutoff('-3 years'));
+        $this->on(ElementQueryResolving::class, $cutoff('-3 years'));
         $this->assertCount(3, $this->titles('quokka'));
 
         // all fixture entries are older than tomorrow
-        $this->on(Search::class, Search::EVENT_MODIFY_ELEMENT_QUERY, $cutoff('+1 day'));
+        $this->on(ElementQueryResolving::class, $cutoff('+1 day'));
         $search = $this->search('quokka');
         $this->assertSame([], $search['results']);
         $this->assertSame(0, $search['total']);
@@ -352,12 +357,12 @@ class SearchTest extends TestCase
         $scores = fn() => array_column($this->search('quokka')['results'], 'score', 'title');
         $before = $scores();
 
-        $this->on(Search::class, Search::EVENT_MODIFY_SEARCH_QUERY, function(DbQueryEvent $event) {
+        $this->on(SearchQueryResolving::class, function(SearchQueryResolving $event) {
             $event->dbQuery
-                ->addSelect(['entries.sectionId'])
-                ->leftJoin(['entries' => \craft\db\Table::ENTRIES], '[[entries.id]] = [[rawsearch.elementId]]');
+                ->addSelect('entries.sectionId')
+                ->leftJoin(CraftTable::ENTRIES, 'entries.id', '=', 'rawsearch.elementId');
         });
-        $this->on(Sort::class, Sort::EVENT_ADD_WEIGHT_SCORE, function(WeightScoreEvent $event) {
+        $this->on(ScoreResolving::class, function(ScoreResolving $event) {
             $sectionId = $event->elementRow['rows'][0]['sectionId'] ?? null;
 
             if ((int)$sectionId === self::$fixture->section->id) {
@@ -381,17 +386,23 @@ class SearchTest extends TestCase
         try {
             // the ferry entry was published 2 years ago
             $ferry->postDate = new \DateTime('-730 days');
-            Craft::$app->getElements()->saveElement($ferry);
+            Elements::saveElement($ferry);
             $before = $scores();
 
             // the recipe of the README
-            $this->on(Search::class, Search::EVENT_MODIFY_SEARCH_QUERY, function(DbQueryEvent $event) {
+            $this->on(SearchQueryResolving::class, function(SearchQueryResolving $event) {
+                $grammar = $event->dbQuery->getGrammar();
                 $event->dbQuery
-                    ->addSelect(['relevanceDate' => 'COALESCE([[dateEntries.postDate]], [[dateElements.dateCreated]])'])
-                    ->leftJoin(['dateEntries' => \craft\db\Table::ENTRIES], '[[dateEntries.id]] = [[rawsearch.elementId]]')
-                    ->leftJoin(['dateElements' => \craft\db\Table::ELEMENTS], '[[dateElements.id]] = [[rawsearch.elementId]]');
+                    ->selectRaw(sprintf(
+                        'COALESCE(%s, %s) AS %s',
+                        $grammar->wrap('dateEntries.postDate'),
+                        $grammar->wrap('dateElements.dateCreated'),
+                        $grammar->wrap('relevanceDate'),
+                    ))
+                    ->leftJoin(CraftTable::ENTRIES . ' as dateEntries', 'dateEntries.id', '=', 'rawsearch.elementId')
+                    ->leftJoin(CraftTable::ELEMENTS . ' as dateElements', 'dateElements.id', '=', 'rawsearch.elementId');
             });
-            $this->on(Sort::class, Sort::EVENT_ADD_WEIGHT_SCORE, function(WeightScoreEvent $event) {
+            $this->on(ScoreResolving::class, function(ScoreResolving $event) {
                 $date = $event->elementRow['rows'][0]['relevanceDate'] ?? null;
 
                 if ($date) {
@@ -407,23 +418,23 @@ class SearchTest extends TestCase
             $this->assertSame($before['Ferry timetable'] + 75, $after['Ferry timetable']);
 
             // it can be combined with the section boost, which joins `entries` too
-            $this->on(Search::class, Search::EVENT_MODIFY_SEARCH_QUERY, function(DbQueryEvent $event) {
+            $this->on(SearchQueryResolving::class, function(SearchQueryResolving $event) {
                 $event->dbQuery
-                    ->addSelect(['entries.sectionId'])
-                    ->leftJoin(['entries' => \craft\db\Table::ENTRIES], '[[entries.id]] = [[rawsearch.elementId]]');
+                    ->addSelect('entries.sectionId')
+                    ->leftJoin(CraftTable::ENTRIES, 'entries.id', '=', 'rawsearch.elementId');
             });
             $this->assertSame($after, $scores());
         } finally {
             $ferry->postDate = $originalPostDate;
-            Craft::$app->getElements()->saveElement($ferry);
+            Elements::saveElement($ferry);
         }
     }
 
     public function testJoinsDontCauseAmbiguousColumns(): void
     {
-        $this->on(Search::class, Search::EVENT_MODIFY_SEARCH_QUERY, function(DbQueryEvent $event) {
+        $this->on(SearchQueryResolving::class, function(SearchQueryResolving $event) {
             // elements has columns like `type` and `dateCreated` too
-            $event->dbQuery->innerJoin(['elements' => \craft\db\Table::ELEMENTS], '[[elements.id]] = [[rawsearch.elementId]]');
+            $event->dbQuery->join(CraftTable::ELEMENTS, 'elements.id', '=', 'rawsearch.elementId');
         });
 
         $this->assertCount(3, $this->titles('quokka', ['elementTypes' => 'entry']));
@@ -432,8 +443,8 @@ class SearchTest extends TestCase
 
     public function testSearchQueryEvent(): void
     {
-        $this->on(Search::class, Search::EVENT_MODIFY_SEARCH_QUERY, function(DbQueryEvent $event) {
-            $event->dbQuery->andWhere(['not', ['elementId' => self::$fixture->ids['ferry']]]);
+        $this->on(SearchQueryResolving::class, function(SearchQueryResolving $event) {
+            $event->dbQuery->whereNot('rawsearch.elementId', self::$fixture->ids['ferry']);
         });
 
         $this->assertNotContains('Ferry timetable', $this->titles('quokka'));
@@ -441,7 +452,7 @@ class SearchTest extends TestCase
 
     public function testResultRowsEventCanAddCustomRows(): void
     {
-        $this->on(Search::class, Search::EVENT_MODIFY_RESULT_ROWS, function(RowsEvent $event) {
+        $this->on(ResultRowsResolving::class, function(ResultRowsResolving $event) {
             array_unshift($event->rows, ['type' => 'custom', 'title' => 'Contact', 'url' => '/contact']);
         });
 
@@ -455,7 +466,7 @@ class SearchTest extends TestCase
     {
         $expected = array_reverse($this->titles('quokka'));
 
-        $this->on(Search::class, Search::EVENT_MODIFY_RESULTS, function(RowsEvent $event) {
+        $this->on(ResultsResolving::class, function(ResultsResolving $event) {
             $event->rows = array_reverse($event->rows);
         });
 
@@ -464,7 +475,7 @@ class SearchTest extends TestCase
 
     public function testWeightScoreEvents(): void
     {
-        $this->on(Sort::class, Sort::EVENT_ADD_WEIGHT_SCORE, function(WeightScoreEvent $event) {
+        $this->on(ScoreResolving::class, function(ScoreResolving $event) {
             if ($event->elementRow['elementId'] === self::$fixture->ids['englishOnly']) {
                 $event->score += 100000;
             }
@@ -475,7 +486,7 @@ class SearchTest extends TestCase
 
     public function testRowScoreEvent(): void
     {
-        $this->on(Sort::class, Sort::EVENT_ADD_WEIGHT_ROW_SCORE, function(WeightScoreEvent $event) {
+        $this->on(RowScoreResolving::class, function(RowScoreResolving $event) {
             if ($event->row['attribute'] === 'field' && str_contains($event->row['normalizedWords'], 'cyclists')) {
                 $event->score += 100000;
             }
@@ -487,10 +498,10 @@ class SearchTest extends TestCase
     public function testBeforeAndAfterSearchEvents(): void
     {
         $events = [];
-        $this->on(Search::class, Search::EVENT_BEFORE_SEARCH, function(SearchEvent $event) use (&$events) {
+        $this->on(Searching::class, function(Searching $event) use (&$events) {
             $events[] = ['before', $event->normalizedQuery, $event->dbQuery !== null];
         });
-        $this->on(Search::class, Search::EVENT_AFTER_SEARCH, function(SearchEvent $event) use (&$events) {
+        $this->on(Searched::class, function(Searched $event) use (&$events) {
             $events[] = ['after', $event->total, count($event->results)];
         });
 
@@ -534,9 +545,9 @@ class SearchTest extends TestCase
 
     public function testStatistic(): void
     {
-        $general = Craft::$app->getConfig()->getGeneral();
+        $general = Cms::config();
         $devMode = $general->devMode;
-        $count = fn() => (int)(new Query())->from(Table::QUERIES)->where(['query' => 'rottnest island'])->count();
+        $count = fn() => DB::table(Table::QUERIES)->where('query', 'rottnest island')->count();
         $before = $count();
 
         try {
@@ -555,22 +566,22 @@ class SearchTest extends TestCase
             $this->plugin()->search->search(['query' => 'Rottnest Island']);
             $this->assertSame($before + 1, $count());
 
-            $row = (new Query())->from(Table::QUERIES)->where(['query' => 'rottnest island'])->orderBy(['id' => SORT_DESC])->one();
-            $this->assertSame(1, (int)$row['results']);
-            $this->assertSame(Search::MODE_WORD_START, (int)$row['mode']);
+            $row = DB::table(Table::QUERIES)->where('query', 'rottnest island')->orderByDesc('id')->first();
+            $this->assertSame(1, (int)$row->results);
+            $this->assertSame(Search::MODE_WORD_START, (int)$row->mode);
 
             $top = $this->plugin()->queries->getMostSearched(self::$fixture->primarySite->id, 100);
             $this->assertContains('rottnest island', array_column($top, 'query'));
 
             // only the first page is counted
             $general->devMode = false;
-            $quokkaCount = fn() => (int)(new Query())->from(Table::QUERIES)->where(['query' => 'quokka'])->count();
+            $quokkaCount = fn() => DB::table(Table::QUERIES)->where('query', 'quokka')->count();
             $quokkaBefore = $quokkaCount();
             $this->plugin()->search->search(['query' => 'quokka', 'page' => 2, 'resultsPerPage' => 1]);
             $this->assertSame($quokkaBefore, $quokkaCount());
         } finally {
             $general->devMode = $devMode;
-            Craft::$app->getDb()->createCommand()->delete(Table::QUERIES, ['query' => ['rottnest island', 'quokka']])->execute();
+            DB::table(Table::QUERIES)->whereIn('query', ['rottnest island', 'quokka'])->delete();
         }
     }
 }

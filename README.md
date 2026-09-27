@@ -24,8 +24,8 @@ A highly customizable text search for Craft CMS 5 with weighted results and resu
 
 ## Requirements
 
-* Craft CMS 5.0+
-* PHP 8.2+
+* Craft CMS 6.0+ (for Craft 5, use version 1.x)
+* PHP 8.5+
 * MySQL 8 / MariaDB (fulltext index) or PostgreSQL (searches with `LIKE`, slower on big sites)
 
 ## Installation
@@ -35,7 +35,7 @@ composer require oncode/craft-rawsearch
 php craft plugin/install rawsearch
 ```
 
-The installation pushes queue jobs that build the search index of the existing content.
+The installation pushes queue jobs that build the search index of the existing content (make sure a queue worker runs, e.g. `php artisan queue:work`).
 Afterwards the index is kept up to date whenever elements are saved, deleted or restored.
 
 You can rebuild the index anytime:
@@ -51,7 +51,7 @@ php craft rawsearch/api-key/generate           # generate a new API key
 ## Usage
 
 ```twig
-{% set query = craft.app.request.getParam('query') %}
+{% set query = Request.input('query') %}
 
 <form action="{{ url('search') }}">
     <input type="search" name="query" value="{{ query }}">
@@ -205,7 +205,7 @@ Params: `query`, `site`, `elementTypes`, `limit` (keeps the most frequent words)
 Returns the words starting with the query (alphabetically, with their original spelling):
 
 ```json
-{"error": false, "result": [{"word": "Test", "results": 5, "elements": [{"id": 12, "type": "craft\\elements\\Entry", "count": 3}]}]}
+{"error": false, "result": [{"word": "Test", "results": 5, "elements": [{"id": 12, "type": "CraftCms\\Cms\\Entry\\Elements\\Entry", "count": 3}]}]}
 ```
 
 * `results` – number of results a search for the word finds. The search matches word starts, so this includes elements with longer words (`Tests`, `Testing`).
@@ -226,7 +226,7 @@ The API key is generated on installation and can be found under Settings → Gen
 
 ## Configuration
 
-Create `config/rawsearch.php` to override settings:
+Create `config/craft/rawsearch.php` to override settings:
 
 ```php
 <?php
@@ -241,49 +241,50 @@ return [
 
 ## Events
 
+Every event is its own class in `oncode\rawsearch\events`, listen to it with Laravel's `Event::listen()`, e.g. in the `boot()` method of a service provider or module.
+
 ```php
-use Craft;
-use oncode\rawsearch\events\DbQueryEvent;
-use oncode\rawsearch\events\ElementQueryEvent;
-use oncode\rawsearch\events\IndexElementEvent;
-use oncode\rawsearch\events\RowsEvent;
-use oncode\rawsearch\events\WeightScoreEvent;
-use oncode\rawsearch\services\Index;
-use oncode\rawsearch\services\Search;
-use oncode\rawsearch\services\Sort;
-use yii\base\Event;
+use CraftCms\Cms\Database\Table;
+use CraftCms\Cms\Element\Queries\EntryQuery;
+use CraftCms\Cms\Support\Facades\Sections;
+use CraftCms\Cms\Support\Query;
+use Illuminate\Support\Facades\Event;
+use oncode\rawsearch\events\ElementIndexing;
+use oncode\rawsearch\events\ElementQueryResolving;
+use oncode\rawsearch\events\ResultRowsResolving;
+use oncode\rawsearch\events\ScoreResolving;
+use oncode\rawsearch\events\SearchQueryResolving;
 
 // only search entries of a specific section
-Event::on(Search::class, Search::EVENT_MODIFY_ELEMENT_QUERY, function(ElementQueryEvent $event) {
-    if ($event->query instanceof \craft\elements\db\EntryQuery) {
+Event::listen(ElementQueryResolving::class, function(ElementQueryResolving $event) {
+    if ($event->query instanceof EntryQuery) {
         $event->query->section('news');
     }
 });
 
 // don't find news entries that are older than 3 years
-Event::on(Search::class, Search::EVENT_MODIFY_ELEMENT_QUERY, function(ElementQueryEvent $event) {
-    $news = Craft::$app->getEntries()->getSectionByHandle('news');
+Event::listen(ElementQueryResolving::class, function(ElementQueryResolving $event) {
+    $news = Sections::getSectionByHandle('news');
 
-    if ($news && $event->query instanceof \craft\elements\db\EntryQuery) {
-        $event->query->andWhere(['or',
-            ['not', ['entries.sectionId' => $news->id]],
-            ['>=', 'entries.postDate', \craft\helpers\Db::prepareDateForDb(new \DateTime('-3 years'))],
-        ]);
+    if ($news && $event->query instanceof EntryQuery) {
+        $event->query->where(fn($query) => $query
+            ->where('entries.sectionId', '<>', $news->id)
+            ->orWhere('entries.postDate', '>=', Query::prepareDateForDb(new \DateTime('-3 years'))));
     }
 });
 
-// modify the db query that searches the index, the index table has the alias `rawsearch`
-Event::on(Search::class, Search::EVENT_MODIFY_SEARCH_QUERY, function(DbQueryEvent $event) {
-    $event->dbQuery->andWhere(['not', ['rawsearch.elementId' => [1361, 1362]]]);
+// modify the db query (Laravel query builder) that searches the index, the index table has the alias `rawsearch`
+Event::listen(SearchQueryResolving::class, function(SearchQueryResolving $event) {
+    $event->dbQuery->whereNotIn('rawsearch.elementId', [1361, 1362]);
 });
 
 // add custom results on top (rows without `elementId` are passed through)
-Event::on(Search::class, Search::EVENT_MODIFY_RESULT_ROWS, function(RowsEvent $event) {
+Event::listen(ResultRowsResolving::class, function(ResultRowsResolving $event) {
     array_unshift($event->rows, ['type' => 'SPECIAL', 'title' => 'Contact', 'url' => '/contact']);
 });
 
 // boost elements
-Event::on(Sort::class, Sort::EVENT_ADD_WEIGHT_SCORE, function(WeightScoreEvent $event) {
+Event::listen(ScoreResolving::class, function(ScoreResolving $event) {
     if ($event->elementRow['elementId'] === 12) {
         $event->score += 3000;
     }
@@ -291,14 +292,14 @@ Event::on(Sort::class, Sort::EVENT_ADD_WEIGHT_SCORE, function(WeightScoreEvent $
 
 // show entries of the "pages" section first:
 // join the section of the entries to the index rows, then use it in the score event
-Event::on(Search::class, Search::EVENT_MODIFY_SEARCH_QUERY, function(DbQueryEvent $event) {
+Event::listen(SearchQueryResolving::class, function(SearchQueryResolving $event) {
     $event->dbQuery
-        ->addSelect(['entries.sectionId'])
-        ->leftJoin(['entries' => \craft\db\Table::ENTRIES], '[[entries.id]] = [[rawsearch.elementId]]');
+        ->addSelect('entries.sectionId')
+        ->leftJoin(Table::ENTRIES, 'entries.id', '=', 'rawsearch.elementId');
 });
 
-Event::on(Sort::class, Sort::EVENT_ADD_WEIGHT_SCORE, function(WeightScoreEvent $event) {
-    $pages = Craft::$app->getEntries()->getSectionByHandle('pages');
+Event::listen(ScoreResolving::class, function(ScoreResolving $event) {
+    $pages = Sections::getSectionByHandle('pages');
     $sectionId = $event->elementRow['rows'][0]['sectionId'] ?? null;
 
     if ($pages && (int)$sectionId === $pages->id) {
@@ -307,23 +308,26 @@ Event::on(Sort::class, Sort::EVENT_ADD_WEIGHT_SCORE, function(WeightScoreEvent $
 });
 
 // don't index an element
-Event::on(Index::class, Index::EVENT_BEFORE_INDEX_ELEMENT, function(IndexElementEvent $event) {
+Event::listen(ElementIndexing::class, function(ElementIndexing $event) {
     $event->isValid = $event->element->id !== 25;
 });
 ```
 
-| Class | Event | Event class |
+| Event | Fired by | Replaces (1.x) |
 | --- | --- | --- |
-| `Search` | `EVENT_BEFORE_SEARCH`, `EVENT_AFTER_SEARCH` | `SearchEvent` |
-| `Search` | `EVENT_MODIFY_SEARCH_QUERY` | `DbQueryEvent` |
-| `Search` | `EVENT_MODIFY_ELEMENT_QUERY` | `ElementQueryEvent` |
-| `Search` | `EVENT_MODIFY_RESULT_ROWS` (all rows, sorted), `EVENT_MODIFY_RESULTS` (current page) | `RowsEvent` |
-| `Sort` | `EVENT_ADD_WEIGHT_ROW_SCORE`, `EVENT_ADD_WEIGHT_SCORE` | `WeightScoreEvent` |
-| `Autocomplete` | `EVENT_BEFORE_AUTOCOMPLETE`, `EVENT_AFTER_AUTOCOMPLETE` | `SearchEvent` |
-| `Autocomplete` | `EVENT_MODIFY_AUTOCOMPLETE_QUERY` | `DbQueryEvent` |
-| `Autocomplete` | `EVENT_MODIFY_WORD_ELEMENT_DATA` | `AutocompleteWordElementEvent` |
-| `Autocomplete` | `EVENT_MODIFY_TERMS` | `RowsEvent` |
-| `Index` | `EVENT_BEFORE_INDEX_ELEMENT`, `EVENT_AFTER_INDEX_ELEMENT`, `EVENT_MODIFY_ATTRIBUTE_VALUES`, `EVENT_MODIFY_FIELD_VALUES`, `EVENT_MODIFY_ROWS` | `IndexElementEvent` |
+| `Searching`, `Searched` | search | `Search::EVENT_BEFORE_SEARCH`, `EVENT_AFTER_SEARCH` |
+| `SearchQueryResolving` (`dbQuery`) | search | `Search::EVENT_MODIFY_SEARCH_QUERY` |
+| `ElementQueryResolving` (`query`) | search | `Search::EVENT_MODIFY_ELEMENT_QUERY` |
+| `ResultRowsResolving` (all rows, sorted), `ResultsResolving` (current page) | search | `Search::EVENT_MODIFY_RESULT_ROWS`, `EVENT_MODIFY_RESULTS` |
+| `RowScoreResolving`, `ScoreResolving` | weighted sort | `Sort::EVENT_ADD_WEIGHT_ROW_SCORE`, `EVENT_ADD_WEIGHT_SCORE` |
+| `Autocompleting`, `Autocompleted` | autocomplete | `Autocomplete::EVENT_BEFORE_AUTOCOMPLETE`, `EVENT_AFTER_AUTOCOMPLETE` |
+| `AutocompleteQueryResolving` (`dbQuery`) | autocomplete | `Autocomplete::EVENT_MODIFY_AUTOCOMPLETE_QUERY` |
+| `WordElementDataResolving` | autocomplete | `Autocomplete::EVENT_MODIFY_WORD_ELEMENT_DATA` |
+| `TermsResolving` | autocomplete | `Autocomplete::EVENT_MODIFY_TERMS` |
+| `ElementIndexing` (`isValid`), `ElementIndexed` | indexing | `Index::EVENT_BEFORE_INDEX_ELEMENT`, `EVENT_AFTER_INDEX_ELEMENT` |
+| `AttributeValuesResolving`, `FieldValuesResolving`, `IndexRowsResolving` | indexing | `Index::EVENT_MODIFY_ATTRIBUTE_VALUES`, `EVENT_MODIFY_FIELD_VALUES`, `EVENT_MODIFY_ROWS` |
+
+The event properties are the same as in 1.x. `dbQuery` is a Laravel query builder (`Illuminate\Database\Query\Builder`) instead of `craft\db\Query`.
 
 ### Recipe: rank newer content higher
 
@@ -331,23 +335,27 @@ Newer elements get up to 300 points, the bonus halves every 365 days (published 
 Entries use their post date, other elements their creation date.
 
 ```php
-use craft\db\Table;
-use oncode\rawsearch\events\DbQueryEvent;
-use oncode\rawsearch\events\WeightScoreEvent;
-use oncode\rawsearch\services\Search;
-use oncode\rawsearch\services\Sort;
-use yii\base\Event;
+use CraftCms\Cms\Database\Table;
+use Illuminate\Support\Facades\Event;
+use oncode\rawsearch\events\ScoreResolving;
+use oncode\rawsearch\events\SearchQueryResolving;
 
 // add the date of every element to the index rows
 // (own table aliases, so it can be combined with other joins like the section boost above)
-Event::on(Search::class, Search::EVENT_MODIFY_SEARCH_QUERY, function(DbQueryEvent $event) {
+Event::listen(SearchQueryResolving::class, function(SearchQueryResolving $event) {
+    $grammar = $event->dbQuery->getGrammar();
     $event->dbQuery
-        ->addSelect(['relevanceDate' => 'COALESCE([[dateEntries.postDate]], [[dateElements.dateCreated]])'])
-        ->leftJoin(['dateEntries' => Table::ENTRIES], '[[dateEntries.id]] = [[rawsearch.elementId]]')
-        ->leftJoin(['dateElements' => Table::ELEMENTS], '[[dateElements.id]] = [[rawsearch.elementId]]');
+        ->selectRaw(sprintf(
+            'COALESCE(%s, %s) AS %s',
+            $grammar->wrap('dateEntries.postDate'),
+            $grammar->wrap('dateElements.dateCreated'),
+            $grammar->wrap('relevanceDate'),
+        ))
+        ->leftJoin(Table::ENTRIES . ' as dateEntries', 'dateEntries.id', '=', 'rawsearch.elementId')
+        ->leftJoin(Table::ELEMENTS . ' as dateElements', 'dateElements.id', '=', 'rawsearch.elementId');
 });
 
-Event::on(Sort::class, Sort::EVENT_ADD_WEIGHT_SCORE, function(WeightScoreEvent $event) {
+Event::listen(ScoreResolving::class, function(ScoreResolving $event) {
     $date = $event->elementRow['rows'][0]['relevanceDate'] ?? null;
 
     if ($date) {
@@ -370,7 +378,7 @@ To leave out evergreen content, e.g. the "pages" section, add `dateEntries.secti
 
 ## Development and tests
 
-`dev/` contains a Docker based Craft installation with the plugin, demo content and a demo search page (autocomplete, AJAX results, sentence/word snippets). It needs Docker only.
+`dev/` contains a Docker based Craft 6 installation with the plugin, demo content and a demo search page (autocomplete, AJAX results, sentence/word snippets). It needs Docker only.
 
 ```bash
 cd dev
@@ -382,15 +390,15 @@ cd dev
 * Control panel: http://localhost:8088/admin (admin / password123)
 * Start and stop: `docker compose up -d` / `docker compose stop` in `dev/`
 * Set up from scratch: `docker compose down -v && rm -rf site && ./setup.sh`
+* Queue jobs: `docker compose exec php php artisan queue:work --stop-when-empty`
 
-The plugin is linked into the project, changes apply immediately. The demo templates are in `dev/templates`, the demo content is created by `dev/seed.php`.
+The plugin is linked into the project, changes apply immediately. The demo templates are in `dev/templates` (linked to `resources/views` of the project), the demo content is created by `dev/seed.php`.
 
 The tests create their own site, fields, section and entries with unusual words, so they can also run against another Craft installation that has the plugin installed:
 
 ```bash
 cd /path/to/craft
-composer require --dev phpunit/phpunit:^11
 CRAFT_BASE_PATH=$PWD vendor/bin/phpunit -c /path/to/rawsearch/phpunit.xml.dist
 ```
 
-Set `RAWSEARCH_TEST_URL` to the site URL of that installation to run the API tests too, they are skipped otherwise.
+The tests run the queue jobs right away (sync queue). Set `RAWSEARCH_TEST_URL` to the site URL of that installation to run the API tests too, they are skipped otherwise.

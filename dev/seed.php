@@ -2,50 +2,55 @@
 // Creates test fields, a section, a second site and entries for testing RawSearch.
 // Run by setup.sh, again with: docker compose run --rm php php /app/seed.php
 
-require '/app/site/bootstrap.php';
-$app = require CRAFT_VENDOR_PATH . '/craftcms/cms/bootstrap/console.php';
+require '/app/site/vendor/autoload.php';
+$app = require '/app/site/bootstrap/app.php';
+$app->singleton(Illuminate\Contracts\Console\Kernel::class, CraftCms\Cms\Console\Kernel::class);
+$app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 
-use craft\elements\Entry;
-use craft\fields\Matrix;
-use craft\fields\PlainText;
-use craft\fieldlayoutelements\CustomField;
-use craft\fieldlayoutelements\entries\EntryTitleField;
-use craft\models\EntryType;
-use craft\models\FieldLayout;
-use craft\models\FieldLayoutTab;
-use craft\models\Section;
-use craft\models\Section_SiteSettings;
-use craft\models\Site;
-
-$fields = Craft::$app->getFields();
-$entries = Craft::$app->getEntries();
-$sites = Craft::$app->getSites();
+use CraftCms\Cms\Element\Enums\PropagationMethod;
+use CraftCms\Cms\Entry\Data\EntryType;
+use CraftCms\Cms\Entry\Elements\Entry;
+use CraftCms\Cms\Field\Matrix;
+use CraftCms\Cms\Field\PlainText;
+use CraftCms\Cms\FieldLayout\FieldLayout;
+use CraftCms\Cms\FieldLayout\FieldLayoutTab;
+use CraftCms\Cms\FieldLayout\LayoutElements\CustomField;
+use CraftCms\Cms\FieldLayout\LayoutElements\Entries\EntryTitleField;
+use CraftCms\Cms\Section\Data\Section;
+use CraftCms\Cms\Section\Data\SectionSiteSettings;
+use CraftCms\Cms\Section\Enums\SectionType;
+use CraftCms\Cms\Site\Data\Site;
+use CraftCms\Cms\Support\Facades\Elements;
+use CraftCms\Cms\Support\Facades\EntryTypes;
+use CraftCms\Cms\Support\Facades\Fields;
+use CraftCms\Cms\Support\Facades\Sections;
+use CraftCms\Cms\Support\Facades\Sites;
 
 function fail($what, $model) {
-    fwrite(STDERR, "$what failed: " . json_encode($model->getErrors()) . "\n");
+    fwrite(STDERR, "$what failed: " . json_encode($model->errors()->getMessages()) . "\n");
     exit(1);
 }
 
 // second site (German)
-$de = $sites->getSiteByHandle('de');
+$de = Sites::getSiteByHandle('de');
 if (!$de) {
     $de = new Site([
-        'groupId' => $sites->getPrimarySite()->groupId,
+        'groupId' => Sites::getPrimarySite()->groupId,
         'name' => 'Deutsch',
         'handle' => 'de',
         'language' => 'de-CH',
         'hasUrls' => true,
-        'baseUrl' => '@web/de',
+        'baseUrl' => Sites::getPrimarySite()->getBaseUrl() . 'de',
     ]);
-    $sites->saveSite($de) || fail('site', $de);
+    Sites::saveSite($de) || fail('site', $de);
 }
 
 // fields
-$make = function(string $class, string $handle, string $name, array $config = []) use ($fields) {
-    $field = $fields->getFieldByHandle($handle);
+$make = function(string $class, string $handle, string $name, array $config = []) {
+    $field = Fields::getFieldByHandle($handle);
     if (!$field) {
         $field = new $class(array_merge(['name' => $name, 'handle' => $handle], $config));
-        $fields->saveField($field) || fail("field $handle", $field);
+        Fields::saveField($field) || fail("field $handle", $field);
     }
     return $field;
 };
@@ -66,11 +71,11 @@ $layoutFor = function(array $fieldsList, bool $withTitle = true) {
 };
 
 // matrix block entry type
-$blockType = $entries->getEntryTypeByHandle('textBlock');
+$blockType = EntryTypes::getEntryTypeByHandle('textBlock');
 if (!$blockType) {
     $blockType = new EntryType(['name' => 'Text Block', 'handle' => 'textBlock', 'hasTitleField' => false]);
     $blockType->setFieldLayout($layoutFor([$blockText], false));
-    $entries->saveEntryType($blockType) || fail('block type', $blockType);
+    EntryTypes::saveEntryType($blockType) || fail('block type', $blockType);
 }
 
 $matrix = $make(Matrix::class, 'contentBlocks', 'Content Blocks', [
@@ -79,25 +84,25 @@ $matrix = $make(Matrix::class, 'contentBlocks', 'Content Blocks', [
 ]);
 
 // page entry type + section
-$pageType = $entries->getEntryTypeByHandle('page');
+$pageType = EntryTypes::getEntryTypeByHandle('page');
 if (!$pageType) {
     $pageType = new EntryType(['name' => 'Page', 'handle' => 'page']);
     $pageType->setFieldLayout($layoutFor([$intro, $body, $secret, $matrix]));
-    $entries->saveEntryType($pageType) || fail('page type', $pageType);
+    EntryTypes::saveEntryType($pageType) || fail('page type', $pageType);
 }
 
-$section = $entries->getSectionByHandle('pages');
+$section = Sections::getSectionByHandle('pages');
 if (!$section) {
     $section = new Section([
         'name' => 'Pages',
         'handle' => 'pages',
-        'type' => Section::TYPE_CHANNEL,
-        'propagationMethod' => Section::PROPAGATION_METHOD_ALL,
+        'type' => SectionType::Channel,
+        'propagationMethod' => PropagationMethod::All,
     ]);
     $section->setEntryTypes([$pageType]);
     $settings = [];
-    foreach ($sites->getAllSites() as $site) {
-        $settings[$site->id] = new Section_SiteSettings([
+    foreach (Sites::getAllSites() as $site) {
+        $settings[$site->id] = new SectionSiteSettings([
             'siteId' => $site->id,
             'enabledByDefault' => true,
             'hasUrls' => true,
@@ -106,7 +111,7 @@ if (!$section) {
         ]);
     }
     $section->setSiteSettings($settings);
-    $entries->saveSection($section) || fail('section', $section);
+    Sections::saveSection($section) || fail('section', $section);
 }
 
 // entries
@@ -197,19 +202,22 @@ foreach ($data as $item) {
         'secret' => $item['secret'],
         'contentBlocks' => ['entries' => $blocks, 'sortOrder' => array_keys($blocks)],
     ]);
-    Craft::$app->getElements()->saveElement($entry) || fail('entry ' . $item['title'], $entry);
+    Elements::saveElement($entry) || fail('entry ' . $item['title'], $entry);
 
     if ($item['de']) {
         $deEntry = Entry::find()->id($entry->id)->siteId($de->id)->status(null)->one();
         $deEntry->title = $item['de']['title'];
         $deEntry->slug = null;
         $deEntry->setFieldValues(['intro' => $item['de']['intro'], 'body' => $item['de']['body']]);
-        Craft::$app->getElements()->saveElement($deEntry) || fail('de entry', $deEntry);
+        Elements::saveElement($deEntry) || fail('de entry', $deEntry);
     }
 
     echo "Created: {$item['title']}\n";
 }
 
-// run the queued index jobs pushed at the end of the request
-Craft::$app->getPlugins()->getPlugin('rawsearch')?->index->pushQueuedElements();
+// push the index jobs for the saved entries
+oncode\rawsearch\RawSearch::getInstance()->index->pushQueuedElements();
+
+// saves the project config and releases its lock, like at the end of a request
+$app->terminate();
 echo "Done\n";

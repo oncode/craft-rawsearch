@@ -2,7 +2,8 @@
 
 namespace oncode\rawsearch\records;
 
-use craft\db\ActiveRecord;
+use CraftCms\Cms\Shared\BaseModel;
+use CraftCms\Cms\Shared\Concerns\HasUid;
 use oncode\rawsearch\db\Table;
 
 /**
@@ -12,10 +13,16 @@ use oncode\rawsearch\db\Table;
  * @property int|null $matchWeight
  * @property int|null $partialMatchWeight
  */
-class FieldConfig extends ActiveRecord
+class FieldConfig extends BaseModel
 {
-    public static function tableName(): string
-    {
-        return Table::FIELD_CONFIGS;
-    }
+    use HasUid;
+
+    protected $table = Table::FIELD_CONFIGS;
+
+    protected $casts = [
+        'fieldId' => 'integer',
+        'index' => 'boolean',
+        'matchWeight' => 'integer',
+        'partialMatchWeight' => 'integer',
+    ];
 }

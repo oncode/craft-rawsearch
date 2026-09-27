@@ -2,34 +2,31 @@
 
 namespace oncode\rawsearch\events;
 
-use craft\db\Query;
-use craft\web\twig\variables\Paginate;
-use yii\base\Event;
+use CraftCms\Cms\Twig\Variables\Paginate;
+use Illuminate\Database\Query\Builder;
 
 /**
- * Fired before/after a search or autocomplete search.
+ * Base class of the events fired before/after a search or autocomplete search.
  */
-class SearchEvent extends Event
+abstract class SearchEvent
 {
-    /** The query as entered by the user. */
-    public string $query = '';
-
-    /** The normalized query that is searched for. */
-    public string $normalizedQuery = '';
-
-    /** The resolved search config. */
-    public array $config = [];
-
-    /** The db query that searches the index (only modify it in "before" events). */
-    public ?Query $dbQuery = null;
-
-    /** Search results (after events only). */
-    public array $results = [];
-
-    public ?Paginate $pagination = null;
-
-    public int $total = 0;
-
-    /** Autocomplete words (autocomplete after event only). */
-    public array $words = [];
+    /**
+     * @param string $query The query as entered by the user
+     * @param string $normalizedQuery The normalized query that is searched for
+     * @param array $config The resolved search config
+     * @param Builder|null $dbQuery The db query that searches the index (only modify it in "before" events)
+     * @param array $results Search results (after search only)
+     * @param array $words Autocomplete words (after autocomplete only)
+     */
+    public function __construct(
+        public string $query = '',
+        public string $normalizedQuery = '',
+        public array $config = [],
+        public ?Builder $dbQuery = null,
+        public array $results = [],
+        public ?Paginate $pagination = null,
+        public int $total = 0,
+        public array $words = [],
+    ) {
+    }
 }

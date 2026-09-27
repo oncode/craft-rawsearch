@@ -2,17 +2,17 @@
 
 namespace oncode\rawsearch\events;
 
-use craft\db\Query;
-use yii\base\Event;
+use Illuminate\Database\Query\Builder;
 
 /**
- * Allows modifying the db query that searches the index table, e.g. to join other tables.
+ * Base class of the events that allow modifying the db query that searches the index table, e.g. to join other tables.
  */
-class DbQueryEvent extends Event
+abstract class DbQueryEvent
 {
-    public Query $dbQuery;
-
-    public string $normalizedQuery = '';
-
-    public array $config = [];
+    public function __construct(
+        public Builder $dbQuery,
+        public string $normalizedQuery = '',
+        public array $config = [],
+    ) {
+    }
 }

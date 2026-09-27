@@ -2,23 +2,27 @@
 
 namespace oncode\rawsearch\events;
 
-use craft\base\ElementInterface;
-use craft\events\CancelableEvent;
+use CraftCms\Cms\Element\Contracts\ElementInterface;
+use CraftCms\Cms\Shared\Concerns\ValidatableEvent;
 
 /**
- * Fired while an element gets indexed.
- * Set `$event->isValid = false` in the "before" event to prevent the element from being indexed.
+ * Base class of the events fired while an element gets indexed.
+ * Set `$event->isValid = false` in ElementIndexing to prevent the element from being indexed.
  */
-class IndexElementEvent extends CancelableEvent
+abstract class IndexElementEvent
 {
-    public ElementInterface $element;
+    use ValidatableEvent;
 
-    /** @var array<string,string> Attribute name => value */
-    public array $attributeValues = [];
-
-    /** @var array Field values (`id`, `type`, `handle`, `value`) */
-    public array $fieldValues = [];
-
-    /** @var array Rows that will be inserted into the index table */
-    public array $rows = [];
+    /**
+     * @param array<string,string> $attributeValues Attribute name => value
+     * @param array $fieldValues Field values (`id`, `type`, `handle`, `value`)
+     * @param array $rows Rows that will be inserted into the index table
+     */
+    public function __construct(
+        public ElementInterface $element,
+        public array $attributeValues = [],
+        public array $fieldValues = [],
+        public array $rows = [],
+    ) {
+    }
 }

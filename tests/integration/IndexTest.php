@@ -2,16 +2,22 @@
 
 namespace oncode\rawsearch\tests\integration;
 
-use Craft;
-use craft\db\Query;
-use craft\elements\Entry;
-use craft\fields\PlainText;
-use craft\helpers\Db;
-use craft\helpers\Queue;
+use CraftCms\Cms\Entry\Elements\Entry;
+use CraftCms\Cms\Field\PlainText;
+use CraftCms\Cms\Support\Facades\Drafts;
+use CraftCms\Cms\Support\Facades\Elements;
+use CraftCms\Cms\Support\Facades\EntryTypes;
+use CraftCms\Cms\Support\Facades\Fields;
+use CraftCms\Cms\Support\Query;
+use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\DB;
 use oncode\rawsearch\db\Table;
-use oncode\rawsearch\events\IndexElementEvent;
+use oncode\rawsearch\events\AttributeValuesResolving;
+use oncode\rawsearch\events\ElementIndexing;
+use oncode\rawsearch\events\FieldValuesResolving;
+use oncode\rawsearch\events\IndexRowsResolving;
+use oncode\rawsearch\jobs\IndexElements;
 use oncode\rawsearch\jobs\IndexElementType;
-use oncode\rawsearch\services\Index;
 use oncode\rawsearch\tests\ContentFixture;
 use oncode\rawsearch\tests\TestCase;
 
@@ -19,7 +25,7 @@ class IndexTest extends TestCase
 {
     private function attributes(array $rows): array
     {
-        $attributes = array_map(fn($row) => $row['attribute'] . ($row['fieldId'] ? ':' . Craft::$app->getFields()->getFieldById($row['fieldId'])->handle : ''), $rows);
+        $attributes = array_map(fn($row) => $row['attribute'] . ($row['fieldId'] ? ':' . Fields::getFieldById((int)$row['fieldId'])->handle : ''), $rows);
         sort($attributes);
 
         return $attributes;
@@ -73,7 +79,7 @@ class IndexTest extends TestCase
         $blockIds = self::$fixture->entry('quokka')->getFieldValue('rsBlocks')->ids();
 
         $this->assertCount(2, $blockIds);
-        $this->assertSame(0, (int)(new Query())->from(Table::INDEX)->where(['elementId' => $blockIds])->count());
+        $this->assertSame(0, DB::table(Table::INDEX)->whereIn('elementId', $blockIds)->count());
     }
 
     public function testDisabledEntriesAreNotIndexed(): void
@@ -94,7 +100,7 @@ class IndexTest extends TestCase
     {
         $entry = self::$fixture->entry('ferry');
         $entry->setFieldValue('rsBody', 'Now with a catamaran.');
-        Craft::$app->getElements()->saveElement($entry);
+        Elements::saveElement($entry);
         ContentFixture::runQueue();
 
         $words = $this->normalizedWords($entry->id);
@@ -108,12 +114,12 @@ class IndexTest extends TestCase
     {
         $entry = self::$fixture->entry('ferry');
         $entry->enabled = false;
-        Craft::$app->getElements()->saveElement($entry);
+        Elements::saveElement($entry);
         ContentFixture::runQueue();
         $this->assertSame([], $this->indexRows($entry->id));
 
         $entry->enabled = true;
-        Craft::$app->getElements()->saveElement($entry);
+        Elements::saveElement($entry);
         ContentFixture::runQueue();
         $this->assertNotEmpty($this->indexRows($entry->id, self::$fixture->primarySite->id));
         $this->assertNotEmpty($this->indexRows($entry->id, self::$fixture->deSite->id));
@@ -122,10 +128,10 @@ class IndexTest extends TestCase
     public function testDeletingAndRestoring(): void
     {
         $entry = self::$fixture->entry('ferry');
-        Craft::$app->getElements()->deleteElement($entry);
+        Elements::deleteElement($entry);
         $this->assertSame([], $this->indexRows($entry->id));
 
-        Craft::$app->getElements()->restoreElement($entry);
+        Elements::restoreElement($entry);
         ContentFixture::runQueue();
         $this->assertNotEmpty($this->indexRows($entry->id));
     }
@@ -135,7 +141,7 @@ class IndexTest extends TestCase
         $owner = self::$fixture->entry('quokka');
         $block = $owner->getFieldValue('rsBlocks')->one();
         $block->setFieldValue('rsBlockText', 'Brand new block about kiwifruit.');
-        Craft::$app->getElements()->saveElement($block);
+        Elements::saveElement($block);
         ContentFixture::runQueue();
 
         $words = $this->normalizedWords($owner->id);
@@ -147,7 +153,7 @@ class IndexTest extends TestCase
     {
         $owner = self::$fixture->entry('eucalyptus');
         $block = $owner->getFieldValue('rsBlocks')->one();
-        Craft::$app->getElements()->deleteElement($block);
+        Elements::deleteElement($block);
         ContentFixture::runQueue();
 
         $this->assertStringNotContainsString('shade', $this->normalizedWords($owner->id));
@@ -156,20 +162,20 @@ class IndexTest extends TestCase
     public function testDraftsDontChangeTheIndex(): void
     {
         $entry = self::$fixture->entry('quokka');
-        $draft = Craft::$app->getDrafts()->createDraft($entry, 1);
+        $draft = Drafts::createDraft($entry, 1);
         $draft->setFieldValue('rsIntro', 'Draft content about platypus.');
-        Craft::$app->getElements()->saveElement($draft);
+        Elements::saveElement($draft);
         ContentFixture::runQueue();
 
         $this->assertStringNotContainsString('platypus', $this->normalizedWords($entry->id));
         $this->assertSame([], $this->indexRows($draft->id));
 
-        Craft::$app->getElements()->deleteElement($draft, true);
+        Elements::deleteElement($draft, true);
     }
 
     public function testBlacklistedFieldsAreNotIndexed(): void
     {
-        $secret = Craft::$app->getFields()->getFieldByHandle('rsSecret');
+        $secret = Fields::getFieldByHandle('rsSecret');
         $this->plugin()->fieldConfigs->saveIndex($secret->id, false);
         $this->plugin()->index->indexElement(self::$fixture->entry('quokka'));
 
@@ -178,7 +184,7 @@ class IndexTest extends TestCase
 
     public function testBlacklistedFieldInsideMatrixIsNotIndexed(): void
     {
-        $blockText = Craft::$app->getFields()->getFieldByHandle('rsBlockText');
+        $blockText = Fields::getFieldByHandle('rsBlockText');
         $this->plugin()->fieldConfigs->saveIndex($blockText->id, false);
         $this->plugin()->index->indexElement(self::$fixture->entry('quokka'));
 
@@ -232,7 +238,7 @@ class IndexTest extends TestCase
         $this->plugin()->elementTypeConfigs->saveIndex(Entry::class, false);
         $this->plugin()->index->removeNotIndexedElementTypes();
 
-        $this->assertSame(0, (int)(new Query())->from(Table::INDEX)->where(['type' => Entry::class])->count());
+        $this->assertSame(0, DB::table(Table::INDEX)->where('type', Entry::class)->count());
 
         $this->plugin()->elementTypeConfigs->saveIndex(Entry::class, true);
         $this->reindexEntries();
@@ -240,7 +246,7 @@ class IndexTest extends TestCase
 
     public function testBeforeIndexEventCanPreventIndexing(): void
     {
-        $this->on(Index::class, Index::EVENT_BEFORE_INDEX_ELEMENT, function(IndexElementEvent $event) {
+        $this->on(ElementIndexing::class, function(ElementIndexing $event) {
             $event->isValid = $event->element->id !== self::$fixture->ids['ferry'];
         });
 
@@ -251,13 +257,13 @@ class IndexTest extends TestCase
 
     public function testModifyEvents(): void
     {
-        $this->on(Index::class, Index::EVENT_MODIFY_ATTRIBUTE_VALUES, function(IndexElementEvent $event) {
+        $this->on(AttributeValuesResolving::class, function(AttributeValuesResolving $event) {
             $event->attributeValues['title'] .= ' boat';
         });
-        $this->on(Index::class, Index::EVENT_MODIFY_FIELD_VALUES, function(IndexElementEvent $event) {
+        $this->on(FieldValuesResolving::class, function(FieldValuesResolving $event) {
             $event->fieldValues = array_values(array_filter($event->fieldValues, fn($value) => $value['handle'] !== 'rsBody'));
         });
-        $this->on(Index::class, Index::EVENT_MODIFY_ROWS, function(IndexElementEvent $event) {
+        $this->on(IndexRowsResolving::class, function(IndexRowsResolving $event) {
             foreach ($event->rows as &$row) {
                 $row['normalizedWords'] .= 'extraword ';
             }
@@ -274,32 +280,32 @@ class IndexTest extends TestCase
     public function testIndexElementTypeRemovesStaleRows(): void
     {
         $entry = self::$fixture->entry('ferry');
-        Craft::$app->getElements()->deleteElement($entry);
+        Elements::deleteElement($entry);
 
         // simulate a row that was left behind
-        Db::insert(Table::INDEX, [
+        DB::table(Table::INDEX)->insert([
             'elementId' => $entry->id,
             'siteId' => self::$fixture->primarySite->id,
             'type' => Entry::class,
             'attribute' => 'title',
             'normalizedWords' => ' stale ',
             'text' => 'stale',
-            'dateIndexed' => Db::prepareDateForDb(new \DateTime('-1 hour')),
+            'dateIndexed' => Query::prepareDateForDb(new \DateTime('-1 hour')),
         ]);
 
         $this->reindexEntries();
         $this->assertSame([], $this->indexRows($entry->id));
 
-        Craft::$app->getElements()->restoreElement($entry);
+        Elements::restoreElement($entry);
         ContentFixture::runQueue();
     }
 
     public function testIndexElementTypeJob(): void
     {
-        Db::delete(Table::INDEX, ['elementId' => self::$fixture->ids['quokka']]);
+        DB::table(Table::INDEX)->where('elementId', self::$fixture->ids['quokka'])->delete();
 
-        Queue::push(new IndexElementType(['elementType' => Entry::class]));
-        Craft::$app->getQueue()->run();
+        // the tests run with the sync queue
+        dispatch(new IndexElementType(Entry::class));
 
         $this->assertNotEmpty($this->indexRows(self::$fixture->ids['quokka'], self::$fixture->primarySite->id));
         $this->assertNotEmpty($this->indexRows(self::$fixture->ids['quokka'], self::$fixture->deSite->id));
@@ -312,18 +318,18 @@ class IndexTest extends TestCase
         $name = $entryType->name;
         $entryType->name = $name . ' (changed)';
 
+        $bus = Bus::getFacadeRoot();
+        Bus::fake([IndexElements::class]);
+
         try {
-            Craft::$app->getEntries()->saveEntryType($entryType);
-            $this->plugin()->index->pushQueuedElements();
+            EntryTypes::saveEntryType($entryType);
 
-            $jobs = (new Query())->select(['description'])->from('{{%queue}}')->column();
-            Craft::$app->getQueue()->run();
-
-            $this->assertNotEmpty(array_filter($jobs, fn($description) => str_contains((string)$description, 'Updating search index')));
+            Bus::assertDispatched(IndexElements::class, fn(IndexElements $job) => in_array(self::$fixture->ids['quokka'], $job->elementIds, true));
         } finally {
+            Bus::swap($bus);
             $entryType->name = $name;
-            Craft::$app->getEntries()->saveEntryType($entryType);
-            Craft::$app->getQueue()->run();
+            EntryTypes::saveEntryType($entryType);
+            ContentFixture::runQueue();
         }
     }
 }

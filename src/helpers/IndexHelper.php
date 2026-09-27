@@ -2,7 +2,8 @@
 
 namespace oncode\rawsearch\helpers;
 
-use Craft;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class IndexHelper
 {
@@ -14,7 +15,7 @@ class IndexHelper
      */
     public static function supportsFulltext(): bool
     {
-        return Craft::$app->getDb()->getIsMysql();
+        return DB::isMysql();
     }
 
     /**
@@ -55,15 +56,13 @@ class IndexHelper
 
             if (static::supportsFulltext()) {
                 try {
-                    $row = Craft::$app->getDb()
-                        ->createCommand('SELECT @@innodb_ft_min_token_size AS min, @@innodb_ft_max_token_size AS max')
-                        ->queryOne();
+                    $row = DB::selectOne('SELECT @@innodb_ft_min_token_size AS min, @@innodb_ft_max_token_size AS max');
 
                     if ($row) {
-                        self::$fulltextVariables = ['min' => (int)$row['min'], 'max' => (int)$row['max']];
+                        self::$fulltextVariables = ['min' => (int)$row->min, 'max' => (int)$row->max];
                     }
                 } catch (\Throwable $e) {
-                    Craft::warning('Could not fetch fulltext variables: ' . $e->getMessage(), 'rawsearch');
+                    Log::warning('RawSearch: could not fetch fulltext variables: ' . $e->getMessage());
                 }
             }
         }

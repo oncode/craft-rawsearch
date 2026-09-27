@@ -2,8 +2,6 @@
 
 namespace oncode\rawsearch\helpers;
 
-use craft\helpers\Html;
-
 /**
  * Extracts the sentences that contain the found words.
  *
@@ -119,13 +117,13 @@ class SentenceExtractor extends WordRadiusExtractor
             $parts[] = $part;
             $parts[] = $word;
             $foundWords[] = $word;
-            $html .= Html::encode($part) . $this->wrapWord($word);
+            $html .= StringHelper::encodeHtml($part) . $this->wrapWord($word);
             $pos = $wordEnd;
         }
 
         $rest = $this->oneLine(mb_substr($this->text, $pos, $block['end'] - $pos));
         $parts[] = $rest;
-        $html .= Html::encode($rest);
+        $html .= StringHelper::encodeHtml($rest);
 
         $this->wordsFound += count($foundWords);
         $this->extracts[] = [

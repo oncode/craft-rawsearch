@@ -2,16 +2,18 @@
 
 namespace oncode\rawsearch\tests;
 
-use Craft;
-use craft\db\Query;
+use CraftCms\Cms\Entry\Elements\Entry;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use oncode\rawsearch\db\Table;
 use oncode\rawsearch\RawSearch;
+use oncode\rawsearch\services\ElementTypeConfigs;
+use oncode\rawsearch\services\FieldConfigs;
 use PHPUnit\Framework\TestCase as BaseTestCase;
-use yii\base\Event;
 
 /**
  * Base class for tests that need the fixture content.
- * Settings, element type/field configs and event handlers are restored after every test.
+ * Settings, element type/field configs and event listeners are restored after every test.
  */
 abstract class TestCase extends BaseTestCase
 {
@@ -19,7 +21,9 @@ abstract class TestCase extends BaseTestCase
 
     private array $settingsBackup = [];
     private array $configBackup = [];
-    private array $eventHandlers = [];
+
+    /** @var string[] Event classes with listeners of the current test */
+    private array $events = [];
 
     public static function setUpBeforeClass(): void
     {
@@ -29,35 +33,33 @@ abstract class TestCase extends BaseTestCase
 
     protected function setUp(): void
     {
-        $this->settingsBackup = $this->plugin()->getSettings()->getAttributes();
+        $this->settingsBackup = $this->plugin()->getSettings()->validationData();
 
         foreach ([Table::ELEMENT_TYPE_CONFIGS, Table::FIELD_CONFIGS] as $table) {
-            $this->configBackup[$table] = (new Query())->from($table)->all();
+            $this->configBackup[$table] = self::rows(DB::table($table)->get());
         }
     }
 
     protected function tearDown(): void
     {
-        foreach ($this->eventHandlers as [$class, $name, $handler]) {
-            Event::off($class, $name, $handler);
+        foreach (array_unique($this->events) as $event) {
+            Event::forget($event);
         }
 
-        $this->eventHandlers = [];
-        $this->plugin()->getSettings()->setAttributes($this->settingsBackup, false);
-
-        $db = Craft::$app->getDb();
+        $this->events = [];
+        $this->plugin()->getSettings()->setAttributes($this->settingsBackup);
 
         foreach ($this->configBackup as $table => $rows) {
-            $db->createCommand()->delete($table)->execute();
+            DB::table($table)->delete();
 
             if ($rows) {
-                $db->createCommand()->batchInsert($table, array_keys($rows[0]), array_map('array_values', $rows))->execute();
+                DB::table($table)->insert($rows);
             }
         }
 
         // the config services cache their records
-        Craft::$app->getPlugins()->getPlugin('rawsearch')->set('elementTypeConfigs', \oncode\rawsearch\services\ElementTypeConfigs::class);
-        Craft::$app->getPlugins()->getPlugin('rawsearch')->set('fieldConfigs', \oncode\rawsearch\services\FieldConfigs::class);
+        app()->forgetInstance(ElementTypeConfigs::class);
+        app()->forgetInstance(FieldConfigs::class);
     }
 
     protected function plugin(): RawSearch
@@ -70,16 +72,19 @@ abstract class TestCase extends BaseTestCase
      */
     protected function setSettings(array $values): void
     {
-        $this->plugin()->getSettings()->setAttributes($values, false);
+        $this->plugin()->getSettings()->setAttributes($values);
     }
 
     /**
-     * Registers an event handler for the current test only.
+     * Registers an event listener for the current test only.
+     * RawSearch has no other listeners of its own events, so all of the event's listeners are removed afterwards.
+     *
+     * @param class-string $event
      */
-    protected function on(string $class, string $name, callable $handler): void
+    protected function on(string $event, callable $listener): void
     {
-        Event::on($class, $name, $handler);
-        $this->eventHandlers[] = [$class, $name, $handler];
+        Event::listen($event, $listener);
+        $this->events[] = $event;
     }
 
     protected function search(string $query, array $params = []): array
@@ -100,15 +105,28 @@ abstract class TestCase extends BaseTestCase
      */
     protected function reindexEntries(): void
     {
-        $this->plugin()->index->indexElementType(\craft\elements\Entry::class);
+        $this->plugin()->index->indexElementType(Entry::class);
     }
 
     protected function indexRows(int $elementId, ?int $siteId = null): array
     {
-        return (new Query())
-            ->from(Table::INDEX)
-            ->where(['elementId' => $elementId])
-            ->andFilterWhere(['siteId' => $siteId])
-            ->all();
+        return self::rows(DB::table(Table::INDEX)
+            ->where('elementId', $elementId)
+            ->when($siteId, fn($query) => $query->where('siteId', $siteId))
+            ->get());
+    }
+
+    /**
+     * Converts db rows (objects) to arrays.
+     */
+    protected static function rows(iterable $rows): array
+    {
+        $arrays = [];
+
+        foreach ($rows as $row) {
+            $arrays[] = (array)$row;
+        }
+
+        return $arrays;
     }
 }

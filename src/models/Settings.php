@@ -2,14 +2,14 @@
 
 namespace oncode\rawsearch\models;
 
-use craft\base\Model;
+use CraftCms\Cms\Plugin\PluginSettings;
 
 /**
  * Plugin settings.
  *
- * Every property can be overridden with a `config/rawsearch.php` file.
+ * Every property can be overridden with a `config/craft/rawsearch.php` file.
  */
-class Settings extends Model
+class Settings extends PluginSettings
 {
     /** Name of the plugin in the control panel navigation. */
     public string $name = 'Search';
@@ -22,11 +22,10 @@ class Settings extends Model
 
     /** @var string[] Field type classes whose values get indexed. */
     public array $whitelistedFieldTypes = [
-        'craft\fields\PlainText',
-        'craft\fields\Table',
-        'craft\fields\Matrix',
+        'CraftCms\Cms\Field\PlainText',
+        'CraftCms\Cms\Field\Table',
+        'CraftCms\Cms\Field\Matrix',
         'craft\ckeditor\Field',
-        'craft\redactor\Field',
         'benf\neo\Field',
         'verbb\supertable\fields\SuperTableField',
     ];
@@ -49,31 +48,35 @@ class Settings extends Model
     /** Maximum number of index rows fetched for an autocomplete search (null = no limit). */
     public ?int $rowLimitAutocompleteSearch = null;
 
-    public function setAttributes($values, $safeOnly = true): void
+    public function setAttributes($values): void
     {
         // posted lightswitch lists may come in as empty strings
         if (isset($values['whitelistedFieldTypes']) && !is_array($values['whitelistedFieldTypes'])) {
             $values['whitelistedFieldTypes'] = array_filter(array_map('trim', explode(',', (string)$values['whitelistedFieldTypes'])));
         }
 
-        parent::setAttributes($values, $safeOnly);
+        parent::setAttributes($values);
     }
 
-    protected function defineRules(): array
+    public function getRules(): array
     {
+        $weight = ['required', 'integer', 'min:-32768', 'max:32767'];
+
         return [
-            [['name', 'apiKey'], 'required'],
-            [['name', 'apiKey', 'blacklistedWords', 'memoryLimit'], 'string'],
-            [['statistic'], 'boolean'],
-            [[
-                'titleMatchWeight',
-                'partialTitleMatchWeight',
-                'fieldMatchWeight',
-                'partialFieldMatchWeight',
-                'elementTypeMatchWeight',
-            ], 'integer', 'min' => -32768, 'max' => 32767],
-            [['rowLimitSearch', 'rowLimitAutocompleteSearch'], 'integer', 'min' => 1],
-            [['whitelistedFieldTypes'], 'each', 'rule' => ['string']],
+            'name' => ['required', 'string'],
+            'apiKey' => ['required', 'string'],
+            'blacklistedWords' => ['nullable', 'string'],
+            'memoryLimit' => ['required', 'string'],
+            'statistic' => ['boolean'],
+            'titleMatchWeight' => $weight,
+            'partialTitleMatchWeight' => $weight,
+            'fieldMatchWeight' => $weight,
+            'partialFieldMatchWeight' => $weight,
+            'elementTypeMatchWeight' => $weight,
+            'rowLimitSearch' => ['nullable', 'integer', 'min:1'],
+            'rowLimitAutocompleteSearch' => ['nullable', 'integer', 'min:1'],
+            'whitelistedFieldTypes' => ['array'],
+            'whitelistedFieldTypes.*' => ['string'],
         ];
     }
 

@@ -5,7 +5,7 @@
 {% block content %}
     {% if not craft.rawSearch.settings.statistic %}
         <p class="warning with-icon">{{ 'The statistic is disabled in the plugin settings.'|t('rawsearch') }}</p>
-    {% elseif craft.app.config.general.devMode %}
+    {% elseif craft.config.devMode %}
         <p class="notice with-icon">{{ 'Search queries are not stored while dev mode is enabled.'|t('rawsearch') }}</p>
     {% endif %}
 
@@ -16,7 +16,7 @@
                     <th>{{ 'Query'|t('rawsearch') }}</th>
                     <th>{{ 'Results'|t('rawsearch') }}</th>
                     <th>{{ 'Mode'|t('rawsearch') }}</th>
-                    {% if craft.app.isMultiSite %}<th>{{ 'Site'|t('app') }}</th>{% endif %}
+                    {% if Sites.isMultiSite() %}<th>{{ 'Site'|t('app') }}</th>{% endif %}
                     <th>{{ 'Date'|t('rawsearch') }}</th>
                 </tr>
             </thead>
@@ -26,7 +26,7 @@
                         <td>{{ query.query }}</td>
                         <td>{{ query.results|number }}</td>
                         <td>{{ modes[query.mode] ?? query.mode }}{% if query.or %} ({{ 'or'|t('rawsearch') }}){% endif %}</td>
-                        {% if craft.app.isMultiSite %}<td>{{ (craft.app.sites.getSiteById(query.siteId).name ?? '')|t('site') }}</td>{% endif %}
+                        {% if Sites.isMultiSite() %}<td>{{ (Sites.getSiteById(query.siteId).name ?? '')|t('site') }}</td>{% endif %}
                         <td>{{ query.dateCreated|datetime('short') }}</td>
                     </tr>
                 {% endfor %}

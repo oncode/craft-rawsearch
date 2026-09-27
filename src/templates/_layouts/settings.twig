@@ -2,7 +2,7 @@
 
 {% set selectedSubnavItem = 'settings' %}
 {% set title = 'Settings'|t('rawsearch') %}
-{% set currentPath = craft.app.request.pathInfo %}
+{% set currentPath = Request.craftPath() %}
 {% set allowAdminChanges = allowAdminChanges ?? true %}
 
 {% set navGroups = [] %}

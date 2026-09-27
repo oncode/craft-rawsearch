@@ -34,10 +34,8 @@ class ApiTest extends TestCase
 
     private function request(string $action, array $params = [], string $method = 'GET'): array
     {
-        $options = $method === 'GET'
-            ? ['query' => ['p' => "actions/rawsearch/api/$action"] + $params]
-            : ['query' => ['p' => "actions/rawsearch/api/$action"], 'form_params' => $params];
-        $response = $this->client->request($method, 'index.php', $options + ['headers' => ['Accept' => 'application/json']]);
+        $options = $method === 'GET' ? ['query' => $params] : ['form_params' => $params];
+        $response = $this->client->request($method, "actions/rawsearch/api/$action", $options + ['headers' => ['Accept' => 'application/json']]);
 
         return [$response->getStatusCode(), json_decode((string)$response->getBody(), true)];
     }
@@ -131,7 +129,5 @@ class ApiTest extends TestCase
 
         [$status, $data] = $this->request('reindex-element-types', ['key' => $key, 'elementTypes' => 'nope']);
         $this->assertSame(400, $status);
-
-        \Craft::$app->getQueue()->run();
     }
 }
