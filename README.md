@@ -1,6 +1,6 @@
 # RawSearch
 
-A highly customizable text search for Craft CMS 5 with weighted results and result snippets.
+A highly customizable text search for Craft CMS 6 with weighted results and result snippets.
 
 ![Typing "env" shows autocomplete suggestions with the number of results, Enter shows the results with highlighted sentence snippets](docs/demo.gif)
 
